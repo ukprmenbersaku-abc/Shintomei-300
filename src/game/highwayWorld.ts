@@ -101,6 +101,7 @@ export interface FacilityProfile {
   hasRamp: boolean;
   outerX: number;
   innerX: number;
+  facilityY: number;
   hasGuide: boolean;
   hasIsland: boolean;
   islandLeftX: number;
@@ -117,6 +118,7 @@ const EMPTY_PROFILE: FacilityProfile = {
   hasRamp: false,
   outerX: EXPRESSWAY.ROAD_LEFT_EDGE,
   innerX: EXPRESSWAY.ROAD_LEFT_EDGE,
+  facilityY: 0,
   hasGuide: false,
   hasIsland: false,
   islandLeftX: EXPRESSWAY.ROAD_LEFT_EDGE,
@@ -130,9 +132,11 @@ const EMPTY_PROFILE: FacilityProfile = {
 export function getFacilityProfileAt(s: number): FacilityProfile {
   const hit = getMilestoneNear(s, 400);
   if (!hit) return EMPTY_PROFILE;
-  const { milestone: m, ds } = hit;
+  const { milestone: m, ds, worldS } = hit;
   const EDGE = EXPRESSWAY.ROAD_LEFT_EDGE; // -8.375
   const LANE0_LEFT = -5.625;
+  const mainY = roadElevationY(s);
+  const plateauBaseY = roadElevationY(worldS);
 
   if (m.type === 'sa') {
     if (ds < -340 || ds > 380) return EMPTY_PROFILE;
@@ -204,12 +208,16 @@ export function getFacilityProfileAt(s: number): FacilityProfile {
       isMergeLane = true;
     }
 
+    const rampBlend = Math.min(smoothstep(-200, -78, ds), 1 - smoothstep(78, 210, ds));
+    const facilityY = THREE.MathUtils.lerp(mainY, plateauBaseY + 2.2, rampBlend);
+
     return {
       milestone: m,
       ds,
       hasRamp: true,
       outerX,
       innerX,
+      facilityY,
       hasGuide,
       hasIsland,
       islandLeftX,
@@ -284,12 +292,16 @@ export function getFacilityProfileAt(s: number): FacilityProfile {
       isMergeLane = true;
     }
 
+    const rampBlend = Math.min(smoothstep(-165, -58, ds), 1 - smoothstep(58, 170, ds));
+    const facilityY = THREE.MathUtils.lerp(mainY, plateauBaseY + 1.2, rampBlend);
+
     return {
       milestone: m,
       ds,
       hasRamp: true,
       outerX,
       innerX,
+      facilityY,
       hasGuide,
       hasIsland,
       islandLeftX,
@@ -351,6 +363,7 @@ export function getFacilityProfileAt(s: number): FacilityProfile {
       hasRamp: true,
       outerX,
       innerX,
+      facilityY: mainY,
       hasGuide,
       hasIsland,
       islandLeftX,
@@ -400,6 +413,7 @@ export function getFacilityProfileAt(s: number): FacilityProfile {
     hasRamp: true,
     outerX,
     innerX,
+    facilityY: mainY,
     hasGuide,
     hasIsland,
     islandLeftX,
@@ -409,6 +423,30 @@ export function getFacilityProfileAt(s: number): FacilityProfile {
     isPlaza: false,
     isMergeLane: false,
   };
+}
+
+export function getSurfaceElevationAt(s: number, laneOffset: number): number {
+  const mainY = roadElevationY(s);
+  const prof = getFacilityProfileAt(s);
+  if (
+    !prof.hasRamp ||
+    !prof.milestone ||
+    (prof.milestone.type !== 'sa' && prof.milestone.type !== 'pa')
+  ) {
+    return mainY;
+  }
+
+  if (prof.hasIsland) {
+    const splitMid = (prof.islandLeftX + prof.islandRightX) * 0.5;
+    return laneOffset < splitMid ? prof.facilityY : mainY;
+  }
+
+  const latBlend = smoothstep(-6.6, -10.2, laneOffset);
+  return THREE.MathUtils.lerp(mainY, prof.facilityY, latBlend);
+}
+
+export function getSurfaceSlopeAt(s: number, laneOffset: number): number {
+  return (getSurfaceElevationAt(s + 1.0, laneOffset) - getSurfaceElevationAt(s - 1.0, laneOffset)) * 0.5;
 }
 
 export function getOffMainlineBounds(
@@ -634,7 +672,11 @@ export class HighwayWorld {
   private viaductPierMesh: THREE.InstancedMesh;
   private pylonMesh: THREE.InstancedMesh;
 
-  // Mt. Fuji Horizon Backdrop
+  // Mt. Fuji & Grounded Panorama Backdrop
+  private groundFloorMesh: THREE.Mesh;
+  private groundFloorMat: THREE.MeshStandardMaterial;
+  private mountainRingMesh: THREE.Mesh;
+  private mountainRingMat: THREE.MeshStandardMaterial;
   private fujiMesh: THREE.Mesh;
   private fujiMaterial: THREE.MeshBasicMaterial;
 
@@ -664,8 +706,8 @@ export class HighwayWorld {
     this.textures = textures;
     this.isSoftwareGl = isSoftwareGl;
 
-    // 0. Atmospheric Sky Dome
-    const skyGeo = new THREE.SphereGeometry(1100, 32, 20);
+    // 0. Atmospheric Sky Dome (horizon seamlessly fades to grounded terrain mist below horizon)
+    const skyGeo = new THREE.SphereGeometry(1250, 32, 22);
     this.skyMat = new THREE.ShaderMaterial({
       side: THREE.BackSide,
       depthWrite: false,
@@ -673,6 +715,7 @@ export class HighwayWorld {
       uniforms: {
         uZenithColor: { value: new THREE.Color(0x1e5aa8) },
         uHorizonColor: { value: new THREE.Color(0xb6dcf7) },
+        uGroundColor: { value: new THREE.Color(0x283a30) },
         uSunColor: { value: new THREE.Color(0xfff4e0) },
         uSunDir: { value: new THREE.Vector3(0.25, 0.45, -0.85).normalize() },
         uStarIntensity: { value: 0.0 },
@@ -689,6 +732,7 @@ export class HighwayWorld {
       fragmentShader: `
         uniform vec3 uZenithColor;
         uniform vec3 uHorizonColor;
+        uniform vec3 uGroundColor;
         uniform vec3 uSunColor;
         uniform vec3 uSunDir;
         uniform float uStarIntensity;
@@ -715,9 +759,13 @@ export class HighwayWorld {
           float h = clamp(dir.y, 0.0, 1.0);
           vec3 col = mix(uHorizonColor, uZenithColor, pow(h, 0.58));
 
+          if (dir.y < 0.0) {
+            col = mix(uHorizonColor, uGroundColor, smoothstep(0.0, -0.14, dir.y));
+          }
+
           float sunAmt = max(dot(dir, normalize(uSunDir)), 0.0);
-          col += uSunColor * pow(sunAmt, 14.0) * 0.28;
-          col += uSunColor * smoothstep(0.9986, 0.9997, sunAmt) * 1.15;
+          col += uSunColor * pow(sunAmt, 14.0) * 0.28 * smoothstep(-0.04, 0.05, dir.y);
+          col += uSunColor * smoothstep(0.9986, 0.9997, sunAmt) * 1.15 * smoothstep(-0.02, 0.02, dir.y);
 
           if (dir.y > 0.03 && uCloudOpacity > 0.01) {
             vec2 cloudUv = dir.xz / (dir.y + 0.16) * 1.3 + vec2(uTime * 0.008, uTime * 0.003);
@@ -875,7 +923,7 @@ export class HighwayWorld {
     grIsland.frustumCulled = false;
     scene.add(grIsland);
 
-    // 4. Shizuoka Tea-Field Hillsides & Mountain Terrain
+    // 4. Shizuoka Tea-Field Hillsides & Grounded Mountain Terrain (5 columns anchoring outer skirt to -30m valley floor)
     this.terrainMaterial = new THREE.MeshStandardMaterial({
       map: textures.teaTerrainTexture,
       color: 0xcbe3c6,
@@ -883,13 +931,13 @@ export class HighwayWorld {
       metalness: 0.0,
       envMapIntensity: 0.1,
     });
-    this.terrainLeftGeo = createRibbonGeometry(4);
+    this.terrainLeftGeo = createRibbonGeometry(5);
     const terLeft = new THREE.Mesh(this.terrainLeftGeo, this.terrainMaterial);
     terLeft.receiveShadow = !isSoftwareGl;
     terLeft.frustumCulled = false;
     scene.add(terLeft);
 
-    this.terrainRightGeo = createRibbonGeometry(4);
+    this.terrainRightGeo = createRibbonGeometry(5);
     const terRight = new THREE.Mesh(this.terrainRightGeo, this.terrainMaterial);
     terRight.receiveShadow = !isSoftwareGl;
     terRight.frustumCulled = false;
@@ -1151,8 +1199,64 @@ export class HighwayWorld {
     this.pylonMesh.frustumCulled = false;
     scene.add(this.pylonMesh);
 
-    // 17. Distant Mt. Fuji Horizon Silhouette
-    const fujiGeo = new THREE.PlaneGeometry(580, 215);
+    // 17. Grounded World Valley Floor + 360° Layered Distant Mountain Range + Grounded Mt. Fuji
+    this.groundFloorMat = new THREE.MeshStandardMaterial({
+      color: 0x243828,
+      roughness: 0.98,
+      metalness: 0.0,
+      envMapIntensity: 0.04,
+    });
+    this.groundFloorMesh = new THREE.Mesh(new THREE.PlaneGeometry(3600, 3600), this.groundFloorMat);
+    this.groundFloorMesh.rotation.x = -Math.PI / 2;
+    this.groundFloorMesh.position.set(0, -26, 0);
+    this.groundFloorMesh.frustumCulled = false;
+    scene.add(this.groundFloorMesh);
+
+    const ringGeo = new THREE.CylinderGeometry(1020, 1080, 220, 108, 6, true);
+    const rPos = ringGeo.attributes.position as THREE.BufferAttribute;
+    const rCol = new Float32Array(rPos.count * 3);
+    const cBase = new THREE.Color(0x1f3124);
+    const cMid = new THREE.Color(0x2c4338);
+    const cPeak = new THREE.Color(0x4c6278);
+    const cTmp = new THREE.Color();
+    for (let i = 0; i < rPos.count; i++) {
+      const vx = rPos.getX(i);
+      const vy = rPos.getY(i);
+      const vz = rPos.getZ(i);
+      const ang = Math.atan2(vz, vx);
+      const hNorm = (vy + 110) / 220; // 0 = bottom (-110), 1 = top (+110)
+      const ridgeH =
+        68 +
+        38 * Math.sin(ang * 5.0 + 0.4) +
+        24 * Math.cos(ang * 11.0 - 0.8) +
+        14 * Math.sin(ang * 23.0 + 1.3);
+      // Anchor bottom well below groundFloor (-26m), raise upper rows smoothly into peaks
+      const sculptedY = -65 + hNorm * (52 + ridgeH);
+      rPos.setY(i, sculptedY);
+
+      if (hNorm < 0.45) {
+        cTmp.copy(cBase).lerp(cMid, hNorm / 0.45);
+      } else {
+        cTmp.copy(cMid).lerp(cPeak, (hNorm - 0.45) / 0.55);
+      }
+      rCol[i * 3] = cTmp.r;
+      rCol[i * 3 + 1] = cTmp.g;
+      rCol[i * 3 + 2] = cTmp.b;
+    }
+    ringGeo.setAttribute('color', new THREE.BufferAttribute(rCol, 3));
+    ringGeo.computeVertexNormals();
+    this.mountainRingMat = new THREE.MeshStandardMaterial({
+      vertexColors: true,
+      roughness: 0.96,
+      metalness: 0.0,
+      side: THREE.BackSide,
+      envMapIntensity: 0.06,
+    });
+    this.mountainRingMesh = new THREE.Mesh(ringGeo, this.mountainRingMat);
+    this.mountainRingMesh.frustumCulled = false;
+    scene.add(this.mountainRingMesh);
+
+    const fujiGeo = new THREE.PlaneGeometry(940, 290);
     this.fujiMaterial = new THREE.MeshBasicMaterial({
       map: textures.fujiBackdrop,
       transparent: true,
@@ -1161,6 +1265,7 @@ export class HighwayWorld {
       fog: false,
     });
     this.fujiMesh = new THREE.Mesh(fujiGeo, this.fujiMaterial);
+    this.fujiMesh.frustumCulled = false;
     scene.add(this.fujiMesh);
 
     // 18. Falling Rain Streaks
@@ -1267,14 +1372,22 @@ export class HighwayWorld {
     }
 
     // Update sky dome shader uniforms
-    this.skyMesh.position.set(roadCenterX(playerS), roadElevationY(playerS), -playerS);
+    const curX = roadCenterX(playerS);
+    const curY = roadElevationY(playerS);
+    this.skyMesh.position.set(curX, curY, -playerS);
     this.skyMat.uniforms.uZenithColor.value.copy(weatherParams.skyZenith).multiplyScalar(1 - weatherParams.tunnelBlend * 0.85);
     this.skyMat.uniforms.uHorizonColor.value.copy(weatherParams.skyHorizon).multiplyScalar(1 - weatherParams.tunnelBlend * 0.85);
+    this.skyMat.uniforms.uGroundColor.value
+      .setHex(weatherParams.fogColorHex)
+      .multiplyScalar(0.32 * (1 - weatherParams.tunnelBlend * 0.8));
     this.skyMat.uniforms.uSunColor.value.copy(weatherParams.sunColor);
     this.skyMat.uniforms.uSunDir.value.set(0.22, weatherParams.sunElevation, -0.88).normalize();
     this.skyMat.uniforms.uStarIntensity.value = weatherParams.starIntensity * (1 - weatherParams.tunnelBlend);
     this.skyMat.uniforms.uCloudOpacity.value = Math.max(0.12, 0.4 - weatherParams.starIntensity * 0.25);
     this.skyMat.uniforms.uTime.value = this.elapsedTime;
+
+    this.groundFloorMesh.position.set(curX, -26, -playerS);
+    this.mountainRingMesh.position.set(curX, -8, -playerS);
 
     this.roadMaterial.roughness = weatherParams.asphaltRoughness;
     this.roadMaterial.envMapIntensity = weatherParams.asphaltEnvIntensity;
@@ -1290,10 +1403,11 @@ export class HighwayWorld {
       updateLedBoardCanvas(this.textures.ledCanvas, this.textures.ledTexture, ledMessages[this.ledMessageIdx]);
     }
 
-    const horizonS = playerS + 940;
+    const horizonS = playerS + 980;
+    // Anchor Mt. Fuji firmly below the -26m valley floor (bottom edge = 82 - 145 = -63m) so it never floats
     this.fujiMesh.position.set(
-      roadCenterX(playerS) - 95,
-      roadElevationY(playerS) + 68,
+      curX - 95,
+      82,
       -horizonS,
     );
     this.fujiMaterial.opacity = weatherParams.fujiOpacity;
@@ -1347,7 +1461,7 @@ export class HighwayWorld {
       this.sprayPoints.visible = true;
       this.sprayMat.opacity = Math.min(0.4, weatherParams.rainAmount * Math.min(1, playerSpeedMs / 55) * 0.42);
       const carX = roadCenterX(playerS) + playerLaneOffset;
-      const carY = roadElevationY(playerS);
+      const carY = getSurfaceElevationAt(playerS, playerLaneOffset);
       const carZ = -playerS;
       const posAttr = this.sprayPoints.geometry.attributes.position as THREE.BufferAttribute;
       const arr = posAttr.array as Float32Array;
@@ -1479,8 +1593,14 @@ export class HighwayWorld {
         const facilityGrp = this.facilityMap.get(m.styleId);
         if (facilityGrp) {
           facilityGrp.visible = true;
-          facilityGrp.position.set(mx, my, -ms);
-          facilityGrp.rotation.set(mPitch, mYaw, 0);
+          if (m.type === 'sa' || m.type === 'pa') {
+            const lift = m.type === 'sa' ? 2.2 : 1.2;
+            facilityGrp.position.set(mx, my + lift, -ms);
+            facilityGrp.rotation.set(0, mYaw, 0);
+          } else {
+            facilityGrp.position.set(mx, my, -ms);
+            facilityGrp.rotation.set(mPitch, mYaw, 0);
+          }
         }
 
         const divergeDs = m.type === 'sa' || m.type === 'ic' ? -165 : m.type === 'pa' ? -135 : -150;
@@ -1528,12 +1648,14 @@ export class HighwayWorld {
       oncUv.setXY(rIdx, 1, -vCoord);
       oncUv.setXY(rIdx + 1, 0, -vCoord);
 
-      // Dynamic Curved Ramp / Decel / Accel Asphalt Ribbon
+      const rampY = prof.hasRamp ? prof.facilityY : cy;
+
+      // Dynamic Curved Ramp / Decel / Accel Asphalt Ribbon (climbs realistically to SA/PA terrace)
       if (prof.hasRamp) {
         const rampOuterX = prof.outerX;
         const rampInnerX = Math.min(EDGE + 0.15, prof.innerX);
-        rampPos.setXYZ(rIdx, cx + rightX * rampOuterX, cy + 0.015, z + rightZ * rampOuterX);
-        rampPos.setXYZ(rIdx + 1, cx + rightX * rampInnerX, cy + 0.015, z + rightZ * rampInnerX);
+        rampPos.setXYZ(rIdx, cx + rightX * rampOuterX, rampY + 0.015, z + rightZ * rampOuterX);
+        rampPos.setXYZ(rIdx + 1, cx + rightX * rampInnerX, rampY + 0.015, z + rightZ * rampInnerX);
       } else {
         rampPos.setXYZ(rIdx, cx + rightX * EDGE, cy + 0.015, z + rightZ * EDGE);
         rampPos.setXYZ(rIdx + 1, cx + rightX * EDGE, cy + 0.015, z + rightZ * EDGE);
@@ -1543,15 +1665,15 @@ export class HighwayWorld {
       rampUv.setXY(rIdx, 0, vCoord * 0.5);
       rampUv.setXY(rIdx + 1, 1, vCoord * 0.5);
 
-      // SA / PA Parking Bay Markings Overlay (smoothly tapers into/out of apron)
+      // SA / PA Parking Bay Markings Overlay (level on SA terrace)
       const plazaHalfSpan = prof.milestone?.type === 'pa' ? 50 : 70;
       if (prof.isPlaza && Math.abs(prof.ds) <= plazaHalfSpan) {
-        plazaPos.setXYZ(rIdx, cx + rightX * prof.outerX, cy + 0.024, z + rightZ * prof.outerX);
-        plazaPos.setXYZ(rIdx + 1, cx + rightX * prof.innerX, cy + 0.024, z + rightZ * prof.innerX);
+        plazaPos.setXYZ(rIdx, cx + rightX * prof.outerX, rampY + 0.024, z + rightZ * prof.outerX);
+        plazaPos.setXYZ(rIdx + 1, cx + rightX * prof.innerX, rampY + 0.024, z + rightZ * prof.innerX);
       } else {
         const midX = prof.hasRamp ? (prof.outerX + prof.innerX) * 0.5 : EDGE;
-        plazaPos.setXYZ(rIdx, cx + rightX * midX, cy + 0.024, z + rightZ * midX);
-        plazaPos.setXYZ(rIdx + 1, cx + rightX * midX, cy + 0.024, z + rightZ * midX);
+        plazaPos.setXYZ(rIdx, cx + rightX * midX, rampY + 0.024, z + rightZ * midX);
+        plazaPos.setXYZ(rIdx + 1, cx + rightX * midX, rampY + 0.024, z + rightZ * midX);
       }
       plazaNorm.setXYZ(rIdx, 0, 1, 0);
       plazaNorm.setXYZ(rIdx + 1, 0, 1, 0);
@@ -1586,15 +1708,15 @@ export class HighwayWorld {
       goreUv.setXY(rIdx, 0, vCoord * 0.7);
       goreUv.setXY(rIdx + 1, 1, vCoord * 0.7);
 
-      // Grassy & Curbed Divider Island separating mainline & SA/PA/IC/JCT ramp
+      // Grassy Landscaped Embankment separating mainline & SA/PA/IC/JCT ramp
       const mIdx = r * 4;
       if (prof.hasIsland) {
         const curbIn = Math.min(0.28, (prof.islandRightX - prof.islandLeftX) * 0.14);
-        islandPos.setXYZ(mIdx, cx + rightX * prof.islandLeftX, cy, z + rightZ * prof.islandLeftX);
+        islandPos.setXYZ(mIdx, cx + rightX * prof.islandLeftX, rampY, z + rightZ * prof.islandLeftX);
         islandPos.setXYZ(
           mIdx + 1,
           cx + rightX * (prof.islandLeftX + curbIn),
-          cy + 0.28,
+          rampY + 0.24,
           z + rightZ * (prof.islandLeftX + curbIn),
         );
         islandPos.setXYZ(
@@ -1651,8 +1773,8 @@ export class HighwayWorld {
       const grLeftX = prof.hasRamp ? prof.outerX - 0.28 : -8.55;
       const grBot = prof.isPlaza ? 0.1 : 0.25;
       const grTop = prof.isPlaza ? 0.44 : 0.92;
-      grLPos.setXYZ(rIdx, cx + rightX * grLeftX, cy + grBot, z + rightZ * grLeftX);
-      grLPos.setXYZ(rIdx + 1, cx + rightX * grLeftX, cy + grTop, z + rightZ * grLeftX);
+      grLPos.setXYZ(rIdx, cx + rightX * grLeftX, rampY + grBot, z + rightZ * grLeftX);
+      grLPos.setXYZ(rIdx + 1, cx + rightX * grLeftX, rampY + grTop, z + rightZ * grLeftX);
       grLNorm.setXYZ(rIdx, 1, 0, 0);
       grLNorm.setXYZ(rIdx + 1, 1, 0, 0);
       grLUv.setXY(rIdx, vCoord, 0);
@@ -1665,46 +1787,52 @@ export class HighwayWorld {
       grRUv.setXY(rIdx, vCoord, 0);
       grRUv.setXY(rIdx + 1, vCoord, 1);
 
-      // Shizuoka Tea-Field Hillsides & Suruga Bay Coastal Drop
-      const tIdx = r * 4;
+      // Shizuoka Tea-Field Hillsides & Grounded Outer Mountain Skirts (5 columns, outer column locked to -30m ground floor)
+      const tIdx = r * 5;
       const inRampArea = prof.hasRamp && prof.outerX < -10.5;
       const isSurugaVista = prof.milestone?.styleId === 'suruga-sa' && prof.ds > -185 && prof.ds < 185;
       const isViaduct = cy > 1.2 && !inRampArea;
-      const hillL = isViaduct ? -12 : inRampArea ? 1.2 : 9 + 7 * Math.sin(s * 0.011);
-      const hillR = isViaduct ? -12 : 8 + 6 * Math.cos(s * 0.009);
-      const farPeakL = isSurugaVista ? -24 : 22 + 16 * Math.sin(s * 0.0045);
-      const farPeakR = 20 + 15 * Math.cos(s * 0.0038);
+      const hillL = isViaduct ? -10 : inRampArea ? 1.5 : 8.5 + 6.5 * Math.sin(s * 0.011);
+      const hillR = isViaduct ? -10 : 8 + 5.5 * Math.cos(s * 0.009);
+      const farPeakL = isSurugaVista ? -32 : 20 + 14 * Math.sin(s * 0.0045);
+      const farPeakR = 19 + 14 * Math.cos(s * 0.0038);
 
       const terLeftEdge = prof.hasRamp ? Math.min(-8.6, prof.outerX - 0.5) : -8.6;
-      const terLeftMid = isSurugaVista ? -69.5 : inRampArea ? Math.min(-34, prof.outerX - 18) : -28;
-      const terLeftMidY = isSurugaVista ? cy - 0.15 : inRampArea ? cy - 0.08 : cy + hillL * 0.65;
-      const terLeftOuterY = isSurugaVista ? cy - 22 : cy + hillL * 1.15;
+      const terLeftMid = isSurugaVista ? -69.5 : inRampArea ? Math.min(-42, prof.outerX - 18) : -30;
+      const terLeftMidY = isSurugaVista ? rampY - 0.18 : inRampArea ? rampY - 0.05 : cy + hillL * 0.65;
+      const terLeftOuterY = isSurugaVista ? -32 : cy + hillL * 1.15;
 
-      terLPos.setXYZ(tIdx, cx + rightX * terLeftEdge, isViaduct ? cy - 16 : cy - 0.08, z + rightZ * terLeftEdge);
+      terLPos.setXYZ(tIdx, cx + rightX * terLeftEdge, isViaduct ? cy - 16 : rampY - 0.08, z + rightZ * terLeftEdge);
       terLPos.setXYZ(tIdx + 1, cx + rightX * terLeftMid, terLeftMidY, z + rightZ * terLeftMid);
-      terLPos.setXYZ(tIdx + 2, cx + rightX * -90, terLeftOuterY, z + rightZ * -90);
-      terLPos.setXYZ(tIdx + 3, cx + rightX * -175, cy + farPeakL, z + rightZ * -175);
+      terLPos.setXYZ(tIdx + 2, cx + rightX * -94, terLeftOuterY, z + rightZ * -94);
+      terLPos.setXYZ(tIdx + 3, cx + rightX * -215, isSurugaVista ? -33 : Math.max(-18, cy + farPeakL), z + rightZ * -215);
+      terLPos.setXYZ(tIdx + 4, cx + rightX * -450, -32, z + rightZ * -450);
       terLNorm.setXYZ(tIdx, 0, 1, 0);
       terLNorm.setXYZ(tIdx + 1, 0.35, 0.92, 0);
       terLNorm.setXYZ(tIdx + 2, 0.3, 0.95, 0);
       terLNorm.setXYZ(tIdx + 3, 0.2, 0.97, 0);
+      terLNorm.setXYZ(tIdx + 4, 0.15, 0.98, 0);
       terLUv.setXY(tIdx, 0, vCoord * 0.3);
-      terLUv.setXY(tIdx + 1, 0.33, vCoord * 0.3);
-      terLUv.setXY(tIdx + 2, 0.66, vCoord * 0.3);
-      terLUv.setXY(tIdx + 3, 1, vCoord * 0.3);
+      terLUv.setXY(tIdx + 1, 0.25, vCoord * 0.3);
+      terLUv.setXY(tIdx + 2, 0.5, vCoord * 0.3);
+      terLUv.setXY(tIdx + 3, 0.75, vCoord * 0.3);
+      terLUv.setXY(tIdx + 4, 1, vCoord * 0.3);
 
       terRPos.setXYZ(tIdx, cx + rightX * 24.3, isViaduct ? cy - 16 : cy - 0.1, z + rightZ * 24.3);
-      terRPos.setXYZ(tIdx + 1, cx + rightX * 44, cy + hillR * 0.6, z + rightZ * 44);
-      terRPos.setXYZ(tIdx + 2, cx + rightX * 92, cy + hillR * 1.1, z + rightZ * 92);
-      terRPos.setXYZ(tIdx + 3, cx + rightX * 190, cy + farPeakR, z + rightZ * 190);
+      terRPos.setXYZ(tIdx + 1, cx + rightX * 45, cy + hillR * 0.6, z + rightZ * 45);
+      terRPos.setXYZ(tIdx + 2, cx + rightX * 96, cy + hillR * 1.1, z + rightZ * 96);
+      terRPos.setXYZ(tIdx + 3, cx + rightX * 220, Math.max(-18, cy + farPeakR), z + rightZ * 220);
+      terRPos.setXYZ(tIdx + 4, cx + rightX * 460, -32, z + rightZ * 460);
       terRNorm.setXYZ(tIdx, 0, 1, 0);
       terRNorm.setXYZ(tIdx + 1, -0.35, 0.92, 0);
       terRNorm.setXYZ(tIdx + 2, -0.3, 0.95, 0);
       terRNorm.setXYZ(tIdx + 3, -0.2, 0.97, 0);
+      terRNorm.setXYZ(tIdx + 4, -0.15, 0.98, 0);
       terRUv.setXY(tIdx, 0, vCoord * 0.3);
-      terRUv.setXY(tIdx + 1, 0.33, vCoord * 0.3);
-      terRUv.setXY(tIdx + 2, 0.66, vCoord * 0.3);
-      terRUv.setXY(tIdx + 3, 1, vCoord * 0.3);
+      terRUv.setXY(tIdx + 1, 0.25, vCoord * 0.3);
+      terRUv.setXY(tIdx + 2, 0.5, vCoord * 0.3);
+      terRUv.setXY(tIdx + 3, 0.75, vCoord * 0.3);
+      terRUv.setXY(tIdx + 4, 1, vCoord * 0.3);
 
       // Segment-level props (10m step, 20m/40m props on even/mod4 indices)
       if (r < TOTAL_SEGMENTS) {
@@ -1727,10 +1855,10 @@ export class HighwayWorld {
           }
         }
 
-        // Reflective shoulder delineator posts (hugs curved ramps on left!)
+        // Reflective shoulder delineator posts (hugs curved ramps & SA terrace on left!)
         if (!prof.isPlaza && delIdx < this.delineatorMesh.count) {
           const delLeftX = prof.hasRamp ? prof.outerX - 0.18 : -8.5;
-          this._dummy.position.set(cx + rightX * delLeftX, cy, z + rightZ * delLeftX);
+          this._dummy.position.set(cx + rightX * delLeftX, rampY, z + rightZ * delLeftX);
           this._dummy.rotation.set(0, yaw, 0);
           this._dummy.scale.set(1, 1, 1);
           this._dummy.updateMatrix();
@@ -1988,6 +2116,10 @@ export class HighwayWorld {
     this.guardrailRightGeo.dispose();
     this.roadMaterial.dispose();
     this.terrainMaterial.dispose();
+    this.groundFloorMesh.geometry.dispose();
+    this.groundFloorMat.dispose();
+    this.mountainRingMesh.geometry.dispose();
+    this.mountainRingMat.dispose();
     this.fujiMaterial.dispose();
     this.rainMat.dispose();
     this.rainLines.geometry.dispose();

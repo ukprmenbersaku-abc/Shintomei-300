@@ -1268,17 +1268,23 @@ export function createSurugaSaComplex(textures: ProceduralTexturePack): THREE.Gr
   const group = new THREE.Group();
   const fTex = textures.facilityTextures['suruga-sa'];
 
-  // Suruga Bay Ocean Vista below the left promenade (-X)!
+  // Suruga Bay Ocean Vista below the coastal bluff (-X)
   const oceanMat = new THREE.MeshStandardMaterial({
     color: 0x0369a1,
     roughness: 0.18,
     metalness: 0.55,
     envMapIntensity: 0.85,
   });
-  const ocean = new THREE.Mesh(new THREE.PlaneGeometry(360, 950), oceanMat);
+  const ocean = new THREE.Mesh(new THREE.PlaneGeometry(560, 1200), oceanMat);
   ocean.rotation.x = -Math.PI / 2;
-  ocean.position.set(-255, -18, 0);
+  ocean.position.set(-350, -32, 0);
   group.add(ocean);
+
+  // Coastal retaining wall & grassy bluff slope beneath the elevated terrace
+  const wallMat = new THREE.MeshStandardMaterial({ color: 0x64748b, roughness: 0.9 });
+  const terraceWall = new THREE.Mesh(new THREE.BoxGeometry(24, 4.2, 180), wallMat);
+  terraceWall.position.set(-57.5, -2.0, 0);
+  group.add(terraceWall);
 
   // Coastal terrace platform & promenade deck behind plaza (X = -46 to -66)
   const deckMat = new THREE.MeshStandardMaterial({ color: 0xd6c7b2, roughness: 0.85 });
@@ -1380,12 +1386,12 @@ export function createShimizuPaComplex(textures: ProceduralTexturePack): THREE.G
   const group = new THREE.Group();
   const fTex = textures.facilityTextures['shimizu-pa'];
 
-  // Compact PA Concrete Apron behind curb (X = -33 to -46)
+  // Compact PA Concrete Apron + foundation skirt behind curb (X = -33 to -46)
   const apron = new THREE.Mesh(
-    new THREE.BoxGeometry(14, 0.3, 108),
+    new THREE.BoxGeometry(14, 3.4, 108),
     new THREE.MeshStandardMaterial({ color: 0x475569, roughness: 0.85 }),
   );
-  apron.position.set(-40, 0.15, 0);
+  apron.position.set(-40, -1.4, 0);
   group.add(apron);
 
   // Red-Brick & Steel Garage Building
@@ -1469,10 +1475,10 @@ export function createShizuokaSaComplex(textures: ProceduralTexturePack): THREE.
   const fTex = textures.facilityTextures['shizuoka-sa'];
 
   const terracePad = new THREE.Mesh(
-    new THREE.BoxGeometry(20, 0.35, 168),
+    new THREE.BoxGeometry(20, 3.8, 168),
     new THREE.MeshStandardMaterial({ color: 0x57534e, roughness: 0.88 }),
   );
-  terracePad.position.set(-56, 0.16, 0);
+  terracePad.position.set(-56, -1.56, 0);
   group.add(terracePad);
 
   const facadeMat = new THREE.MeshStandardMaterial({
@@ -1556,10 +1562,10 @@ export function createKakegawaPaComplex(textures: ProceduralTexturePack): THREE.
   const fTex = textures.facilityTextures['kakegawa-pa'];
 
   const apron = new THREE.Mesh(
-    new THREE.BoxGeometry(13, 0.3, 96),
+    new THREE.BoxGeometry(13, 3.4, 96),
     new THREE.MeshStandardMaterial({ color: 0x52525b, roughness: 0.88 }),
   );
-  apron.position.set(-39.5, 0.15, 0);
+  apron.position.set(-39.5, -1.4, 0);
   group.add(apron);
 
   const facadeMat = new THREE.MeshStandardMaterial({
@@ -1636,10 +1642,10 @@ export function createHamamatsuSaComplex(textures: ProceduralTexturePack): THREE
   const fTex = textures.facilityTextures['hamamatsu-sa'];
 
   const apron = new THREE.Mesh(
-    new THREE.BoxGeometry(20, 0.35, 168),
+    new THREE.BoxGeometry(20, 3.8, 168),
     new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.85 }),
   );
-  apron.position.set(-56, 0.16, 0);
+  apron.position.set(-56, -1.56, 0);
   group.add(apron);
 
   const facadeMat = new THREE.MeshStandardMaterial({

@@ -307,25 +307,25 @@ export const HudOverlay: React.FC<HudOverlayProps> = ({
         </div>
       </div>
 
-      {/* Prominent Top-Center Road Guidance & Legal-Speed Notice Banner */}
+      {/* Compact Top-Center Road Guidance & Legal-Speed Notice (never blocks center road view) */}
       {isRunning && banner && (
         <div
-          className={`self-center mt-2 flex items-start gap-3 max-w-xl w-full sm:w-auto rounded-xl px-4 py-3 border-2 shadow-2xl ${
+          className={`fixed top-16 md:top-3 left-1/2 -translate-x-1/2 z-20 w-[min(92vw,440px)] flex items-start gap-2.5 rounded-xl px-3 py-2 border shadow-xl pointer-events-none pt-safe ${
             banner.tone === 'warning'
-              ? 'bg-[#2a0f12]/95 border-red-400 text-red-50'
+              ? 'bg-[#2a0f12]/92 border-red-400/90 text-red-50'
               : banner.tone === 'humor'
-                ? 'bg-[#241a08]/95 border-amber-400 text-amber-50'
-                : 'bg-[#072133]/95 border-emerald-400 text-slate-50'
+                ? 'bg-[#241a08]/92 border-amber-400/90 text-amber-50'
+                : 'bg-[#072133]/92 border-emerald-400/90 text-slate-50'
           }`}
         >
           {banner.tone === 'humor' || banner.tone === 'warning' ? (
-            <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+            <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
           ) : (
-            <Info className="w-5 h-5 text-emerald-300 shrink-0 mt-0.5" />
+            <Info className="w-4 h-4 text-emerald-300 shrink-0 mt-0.5" />
           )}
-          <div className="leading-snug">
-            <div className="font-extrabold text-sm sm:text-base tracking-tight">{banner.title}</div>
-            <div className="text-xs sm:text-sm text-slate-200 mt-0.5">{banner.body}</div>
+          <div className="leading-snug min-w-0">
+            <div className="font-bold text-xs sm:text-sm tracking-tight truncate">{banner.title}</div>
+            <div className="text-[11px] text-slate-200 mt-0.5 line-clamp-2">{banner.body}</div>
           </div>
         </div>
       )}

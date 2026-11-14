@@ -1176,37 +1176,47 @@ function createFujiBackdrop(maxAnisotropy: number): THREE.CanvasTexture {
   const cx = w * 0.5;
   ctx.beginPath();
   ctx.moveTo(0, h);
-  ctx.lineTo(cx - 430, h * 0.78);
-  ctx.quadraticCurveTo(cx - 210, h * 0.52, cx - 78, h * 0.12);
-  ctx.lineTo(cx + 78, h * 0.12);
-  ctx.quadraticCurveTo(cx + 210, h * 0.52, cx + 430, h * 0.78);
+  ctx.lineTo(0, h * 0.86);
+  ctx.quadraticCurveTo(cx - 320, h * 0.74, cx - 185, h * 0.48);
+  ctx.quadraticCurveTo(cx - 115, h * 0.28, cx - 72, h * 0.14);
+  ctx.lineTo(cx + 72, h * 0.14);
+  ctx.quadraticCurveTo(cx + 115, h * 0.28, cx + 185, h * 0.48);
+  ctx.quadraticCurveTo(cx + 320, h * 0.74, w, h * 0.86);
   ctx.lineTo(w, h);
   ctx.closePath();
 
-  const mountainGrad = ctx.createLinearGradient(0, h * 0.12, 0, h);
-  mountainGrad.addColorStop(0, '#3a4b68');
-  mountainGrad.addColorStop(0.55, '#2b3952');
-  mountainGrad.addColorStop(1, '#1e293b');
+  const mountainGrad = ctx.createLinearGradient(0, h * 0.14, 0, h);
+  mountainGrad.addColorStop(0, '#3a4f70');
+  mountainGrad.addColorStop(0.45, '#304462');
+  mountainGrad.addColorStop(0.78, '#283b55');
+  mountainGrad.addColorStop(1, '#1e3046');
   ctx.fillStyle = mountainGrad;
   ctx.fill();
 
   ctx.beginPath();
-  ctx.moveTo(cx - 78, h * 0.12);
-  ctx.lineTo(cx + 78, h * 0.12);
-  ctx.lineTo(cx + 162, h * 0.35);
-  ctx.lineTo(cx + 95, h * 0.3);
-  ctx.lineTo(cx + 42, h * 0.39);
-  ctx.lineTo(cx - 10, h * 0.31);
-  ctx.lineTo(cx - 65, h * 0.4);
-  ctx.lineTo(cx - 115, h * 0.3);
-  ctx.lineTo(cx - 162, h * 0.35);
+  ctx.moveTo(cx - 72, h * 0.14);
+  ctx.lineTo(cx + 72, h * 0.14);
+  ctx.lineTo(cx + 150, h * 0.37);
+  ctx.lineTo(cx + 88, h * 0.32);
+  ctx.lineTo(cx + 38, h * 0.4);
+  ctx.lineTo(cx - 8, h * 0.33);
+  ctx.lineTo(cx - 60, h * 0.41);
+  ctx.lineTo(cx - 108, h * 0.32);
+  ctx.lineTo(cx - 150, h * 0.37);
   ctx.closePath();
 
-  const snowGrad = ctx.createLinearGradient(0, h * 0.12, 0, h * 0.41);
-  snowGrad.addColorStop(0, '#e2e8f0');
+  const snowGrad = ctx.createLinearGradient(0, h * 0.14, 0, h * 0.42);
+  snowGrad.addColorStop(0, '#f1f5f9');
   snowGrad.addColorStop(1, '#cbd5e1');
   ctx.fillStyle = snowGrad;
   ctx.fill();
+
+  // Soft atmospheric horizon mist along lower foothills
+  const mistGrad = ctx.createLinearGradient(0, h * 0.62, 0, h);
+  mistGrad.addColorStop(0, 'rgba(148, 178, 206, 0)');
+  mistGrad.addColorStop(1, 'rgba(148, 178, 206, 0.45)');
+  ctx.fillStyle = mistGrad;
+  ctx.fillRect(0, h * 0.62, w, h * 0.38);
 
   return configureTexture(new THREE.CanvasTexture(canvas), maxAnisotropy, true, false);
 }

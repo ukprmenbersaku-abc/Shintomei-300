@@ -32,6 +32,8 @@ import { HighwayAudioEngine } from './audio';
 import {
   getNextMilestoneAhead,
   getOffMainlineBounds,
+  getSurfaceElevationAt,
+  getSurfaceSlopeAt,
   HighwayWorld,
   isTunnelAt,
   roadCenterDX,
@@ -145,9 +147,9 @@ const HighSpeedRadialShader = {
       vec2 dir = vUv - center;
       float dist = length(dir);
 
-      // Keep central focal zone 100% sharp so signs & ahead cars remain crisp
-      float edgeMask = smoothstep(0.24, 0.72, dist);
-      float blurAmt = uSpeedNorm * edgeMask * 0.018;
+      // Keep wide central focal zone 100% sharp so signs & ahead cars stay crisp at 300km/h
+      float edgeMask = smoothstep(0.32, 0.78, dist);
+      float blurAmt = uSpeedNorm * edgeMask * 0.012;
 
       vec3 col = texture2D(tDiffuse, vUv).rgb;
       if (blurAmt > 0.0005) {
@@ -275,6 +277,9 @@ export class HighwayEngine {
   private cameraMode: CameraMode = CameraMode.Chase;
   private camPos = new THREE.Vector3();
   private camLook = new THREE.Vector3();
+  private camLagX = 0;
+  private camLagY = 0;
+  private camLongOffset = 0;
   private camInitialized = false;
 
   // Inputs & Callbacks
@@ -788,12 +793,13 @@ export class HighwayEngine {
     }
 
     const wCfg = WEATHER_CONFIG[this.activeWeather];
-    const fujiOpacity =
+    const baseFuji =
       this.activeWeather === ActiveWeather.Clear
         ? 0.94
         : this.activeWeather === ActiveWeather.Sunset
           ? 0.8
           : 0.0;
+    const fujiOpacity = baseFuji * (1 - this.curTunnelBlend * 0.9);
 
     const isUltra = this.qualityMode === QualityMode.Ultra;
     this.world.update(
@@ -897,7 +903,7 @@ export class HighwayEngine {
     this.renderer.toneMappingExposure = this.curExposure;
 
     const px = roadCenterX(this.playerS) + this.playerLaneOffset;
-    const py = roadElevationY(this.playerS);
+    const py = getSurfaceElevationAt(this.playerS, this.playerLaneOffset);
     const pz = -this.playerS;
     this.sunLight.position.set(px + 28, py + 44, pz - 18);
     this.sunLight.target.position.set(px, py, pz - 10);
@@ -1005,7 +1011,7 @@ export class HighwayEngine {
     const dragFactor = slipstream ? 0.78 : 1.0;
     const aeroDrag = 0.5 * CAR_PHYSICS.AIR_DENSITY * CAR_PHYSICS.DRAG_COEFF_AREA * speedMs * speedMs * dragFactor;
     const rollingDrag = CAR_PHYSICS.MASS_KG * 9.81 * CAR_PHYSICS.ROLLING_RESISTANCE;
-    const slopePitch = Math.atan(roadElevationDY(this.playerS));
+    const slopePitch = Math.atan(getSurfaceSlopeAt(this.playerS, this.playerLaneOffset));
     const slopeGravity = CAR_PHYSICS.MASS_KG * 9.81 * Math.sin(slopePitch);
 
     const downforce = CAR_PHYSICS.DOWNFORCE_COEFF * speedMs * speedMs;
@@ -1217,9 +1223,9 @@ export class HighwayEngine {
 
   private syncPlayerCarTransform(dt: number, steerInput: number): void {
     const roadX = roadCenterX(this.playerS);
-    const roadY = roadElevationY(this.playerS);
+    const roadY = getSurfaceElevationAt(this.playerS, this.playerLaneOffset);
     const roadYaw = -Math.atan2(roadCenterDX(this.playerS), 1);
-    const roadPitch = Math.atan(roadElevationDY(this.playerS));
+    const roadPitch = Math.atan(getSurfaceSlopeAt(this.playerS, this.playerLaneOffset));
 
     this.playerCar.root.position.set(roadX + this.playerLaneOffset, roadY, -this.playerS);
     this.playerCar.root.rotation.set(roadPitch, roadYaw + this.playerRelYaw, 0);
@@ -1452,15 +1458,15 @@ export class HighwayEngine {
 
     const targetFov =
       this.cameraMode === CameraMode.Chase
-        ? 58 + speedNorm * 22
+        ? 58 + speedNorm * 11
         : this.cameraMode === CameraMode.Hood
-          ? 64 + speedNorm * 14
-          : 66 + speedNorm * 16;
+          ? 64 + speedNorm * 12
+          : 66 + speedNorm * 14;
     this.camera.fov = THREE.MathUtils.damp(this.camera.fov, targetFov, 6, dt);
     this.camera.updateProjectionMatrix();
 
     const roadX = roadCenterX(this.playerS);
-    const roadY = roadElevationY(this.playerS);
+    const roadY = getSurfaceElevationAt(this.playerS, this.playerLaneOffset);
     const roadYaw = -Math.atan2(roadCenterDX(this.playerS), 1);
     const carYaw = roadYaw + this.playerRelYaw;
 
@@ -1476,23 +1482,44 @@ export class HighwayEngine {
       this.cameraShake = Math.max(0, this.cameraShake - dt * 2.2);
     }
     const microVib =
-      (speedNorm > 0.65 ? (Math.random() - 0.5) * 0.022 * (speedNorm - 0.65) : 0) +
+      (speedNorm > 0.65 ? (Math.random() - 0.5) * 0.018 * (speedNorm - 0.65) : 0) +
       (this.cameraShake > 0 ? (Math.random() - 0.5) * this.cameraShake * 0.35 : 0);
 
     if (this.cameraMode === CameraMode.Chase) {
-      const distBehind = 6.5 + speedNorm * 1.15;
-      const height = 2.28 - speedNorm * 0.14;
-      const latFollow = -this.playerLatVel * 0.08;
+      // Road-locked longitudinal distance (prevents v/15 lag from pushing the car far ahead at 300km/h!)
+      const targetPunch = this.input.throttle
+        ? 0.35 * (1 - speedNorm * 0.35)
+        : this.input.brake
+          ? -0.25
+          : 0;
+      this.camLongOffset = THREE.MathUtils.damp(this.camLongOffset, targetPunch, 7, dt);
+
+      if (!this.camInitialized) {
+        this.camLagX = carX;
+        this.camLagY = roadY;
+      } else {
+        this.camLagX = THREE.MathUtils.damp(this.camLagX, carX, 15, dt);
+        this.camLagY = THREE.MathUtils.damp(this.camLagY, roadY, 12, dt);
+      }
+
+      const distBehind = 5.85 + speedNorm * 0.4 + this.camLongOffset;
+      const height = 2.18 + speedNorm * 0.06;
+      const latFollow = -this.playerLatVel * 0.05;
       this._desiredCamPos.set(
-        carX - fwdX * distBehind + rightX * latFollow + microVib,
-        roadY + height + microVib,
+        this.camLagX - fwdX * distBehind + rightX * latFollow + microVib,
+        this.camLagY + height + microVib,
         carZ - fwdZ * distBehind + rightZ * latFollow,
       );
-      this._desiredCamLook.set(carX + fwdX * 19, roadY + 1.05, carZ + fwdZ * 19);
+      this._desiredCamLook.set(
+        THREE.MathUtils.lerp(this.camLagX, carX, 0.7) + fwdX * 22,
+        this.camLagY + 1.08,
+        carZ + fwdZ * 22,
+      );
+      this.camPos.copy(this._desiredCamPos);
+      this.camLook.copy(this._desiredCamLook);
+      this.camInitialized = true;
     } else if (this.cameraMode === CameraMode.Hood) {
-      // Authentic Driver's Bonnet / Hood View:
-      // Mounted at the windshield cowl (z = -0.22 local, y = 1.24) angled slightly down so the
-      // painted power dome, carbon NACA vents, flared front fenders, wipers & side mirrors fill the bottom frame!
+      // Authentic Driver's Bonnet / Hood View
       const hoodPitchBias = -this.playerPitch * 0.6;
       this._desiredCamPos.set(
         carX - fwdX * 0.22 + microVib * 0.35,
@@ -1504,6 +1531,9 @@ export class HighwayEngine {
         roadY + 0.45 + hoodPitchBias * 8,
         carZ + fwdZ * 26,
       );
+      this.camPos.copy(this._desiredCamPos);
+      this.camLook.copy(this._desiredCamLook);
+      this.camInitialized = true;
     } else {
       // Low Bumper Cam
       this._desiredCamPos.set(
@@ -1512,18 +1542,9 @@ export class HighwayEngine {
         carZ + fwdZ * 2.38,
       );
       this._desiredCamLook.set(carX + fwdX * 36, roadY + 0.62, carZ + fwdZ * 36);
-    }
-
-    if (!this.camInitialized || this.cameraMode !== CameraMode.Chase) {
-      // Hood & Bumper cameras stay tightly locked to the car chassis so the hood never jitters
       this.camPos.copy(this._desiredCamPos);
       this.camLook.copy(this._desiredCamLook);
       this.camInitialized = true;
-    } else {
-      const posFactor = 1 - Math.exp(-15 * dt);
-      const lookFactor = 1 - Math.exp(-19 * dt);
-      this.camPos.lerp(this._desiredCamPos, posFactor);
-      this.camLook.lerp(this._desiredCamLook, lookFactor);
     }
 
     this.camera.position.copy(this.camPos);
