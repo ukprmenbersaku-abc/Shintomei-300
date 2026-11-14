@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#041c14" />
+      <stop offset="55%" stop-color="#071222" />
+      <stop offset="100%" stop-color="#04070e" />
+    </linearGradient>
+    <linearGradient id="road" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#1e293b" />
+      <stop offset="100%" stop-color="#0f172a" />
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="108" fill="url(#bg)" />
+  <rect x="20" y="20" width="472" height="472" rx="92" fill="none" stroke="#10b981" stroke-opacity="0.32" stroke-width="6" />
+
+  <!-- Expressway perspective streaks -->
+  <polygon points="168,492 222,272 290,272 344,492" fill="url(#road)" />
+  <polygon points="249,286 263,286 270,350 242,350" fill="#e2e8f0" opacity="0.85" />
+  <polygon points="245,382 267,382 276,472 236,472" fill="#e2e8f0" opacity="0.9" />
+  <line x1="176" y1="492" x2="226" y2="272" stroke="#f59e0b" stroke-width="8" stroke-linecap="round" />
+  <line x1="336" y1="492" x2="286" y2="272" stroke="#e2e8f0" stroke-width="8" stroke-linecap="round" />
+
+  <!-- E1A Highway Shield -->
+  <rect x="136" y="64" width="240" height="84" rx="18" fill="#006b3f" stroke="#ffffff" stroke-width="7" />
+  <text x="256" y="121" text-anchor="middle" fill="#ffffff" font-family="system-ui, -apple-system, sans-serif" font-weight="900" font-size="52" letter-spacing="4">E1A</text>
+
+  <!-- 300 km/h Speed Limit Roundel -->
+  <circle cx="256" cy="242" r="88" fill="#f8fafc" stroke="#d91c2b" stroke-width="22" />
+  <text x="256" y="254" text-anchor="middle" fill="#0f172a" font-family="system-ui, -apple-system, sans-serif" font-weight="900" font-size="68" letter-spacing="-2">300</text>
+  <text x="256" y="294" text-anchor="middle" fill="#475569" font-family="system-ui, -apple-system, sans-serif" font-weight="800" font-size="22">km/h</text>
+</svg>

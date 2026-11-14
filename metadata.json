@@ -1,0 +1,8 @@
+{
+  "name": "E1A 新東名 300km/h ハイウェイ・シミュレーター",
+  "description": "新東名高速道路をモチーフにしたリアル挙動3Dハイウェイレーシングゲーム。天候変化と現実的な交通流の中で、制限速度300km/hの非日常と現実の法定速度遵守の大切さを体感。",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
