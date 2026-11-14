@@ -3,6 +3,7 @@ import { CarPaintId, DeviceMode, QualityMode, TrafficDensity, WeatherMode } from
 import { CAR_PAINTS, TRAFFIC_PRESETS } from '../game/constants';
 import {
   AlertTriangle,
+  Flame,
   Gauge,
   Home,
   Maximize2,
@@ -58,31 +59,31 @@ export const StartModal: React.FC<StartModalProps> = ({
     <div className="fixed inset-0 z-30 flex items-center justify-center p-3 sm:p-4 pt-safe pb-safe bg-[#05080f]/80 pointer-events-auto">
       <div className="w-full max-w-2xl max-h-[92dvh] overflow-y-auto rounded-2xl bg-[#0c121e]/95 border border-slate-700/80 shadow-2xl text-slate-100">
         {/* Authentic E1A Expressway Header */}
-        <div className="px-5 py-4 sm:px-6 sm:py-5 bg-[#005934] border-b border-emerald-400/25 flex items-center justify-between gap-3">
+        <div className="px-5 py-4 sm:px-6 sm:py-5 [@media(max-height:540px)]:px-4 [@media(max-height:540px)]:py-2.5 bg-[#005934] border-b border-emerald-400/25 flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">
             <div className="px-2.5 py-1 rounded border-2 border-white bg-[#004427] font-display-telemetry font-bold text-base sm:text-lg tracking-wider text-white shrink-0">
               E1A
             </div>
             <div>
-              <h1 className="text-base sm:text-xl font-bold tracking-tight text-white">
+              <h1 className="text-base sm:text-xl [@media(max-height:540px)]:text-sm font-bold tracking-tight text-white">
                 新東名 300km/h ハイウェイ・シミュレーター
               </h1>
-              <p className="text-[11px] sm:text-xs text-emerald-100/90 mt-0.5">
+              <p className="text-[11px] sm:text-xs text-emerald-100/90 mt-0.5 [@media(max-height:540px)]:hidden">
                 操作モード・画質・天候・マシンカラー設定
               </p>
             </div>
           </div>
 
-          <div className="shrink-0 w-12 h-12 sm:w-14 sm:h-14 rounded-full bg-white border-[4px] sm:border-[5px] border-[#d91c2b] flex flex-col items-center justify-center shadow-md">
-            <span className="font-display-telemetry font-bold text-base sm:text-lg leading-none text-slate-900">
+          <div className="shrink-0 w-12 h-12 sm:w-14 sm:h-14 [@media(max-height:540px)]:w-10 [@media(max-height:540px)]:h-10 rounded-full bg-white border-[4px] sm:border-[5px] border-[#d91c2b] flex flex-col items-center justify-center shadow-md">
+            <span className="font-display-telemetry font-bold text-base sm:text-lg [@media(max-height:540px)]:text-sm leading-none text-slate-900">
               300
             </span>
-            <span className="text-[8px] font-bold text-slate-600 leading-none mt-0.5">特例</span>
+            <span className="text-[8px] font-bold text-slate-600 leading-none mt-0.5 [@media(max-height:540px)]:hidden">特例</span>
           </div>
         </div>
 
         {/* Body */}
-        <div className="p-4 sm:p-6 space-y-4">
+        <div className="p-4 sm:p-6 [@media(max-height:540px)]:p-3 space-y-4 [@media(max-height:540px)]:space-y-2.5">
           {/* Device Mode Switcher + PWA Install */}
           <div className="flex flex-wrap items-center justify-between gap-2.5 bg-[#090d15] border border-slate-800 rounded-xl p-2.5">
             <div className="flex items-center gap-1.5">
@@ -297,7 +298,7 @@ export const StartModal: React.FC<StartModalProps> = ({
                   <span>最初から</span>
                 </button>
               )}
-              {deviceMode === 'pc' && (
+              {deviceMode === 'pc' ? (
                 <button
                   type="button"
                   onClick={onStartFullscreenUltra}
@@ -305,6 +306,15 @@ export const StartModal: React.FC<StartModalProps> = ({
                 >
                   <Maximize2 className="w-4 h-4" />
                   <span>全画面・超高画質で走る</span>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={onStartFullscreenUltra}
+                  className="min-h-[42px] px-4 py-2 rounded-xl bg-gradient-to-r from-orange-500 to-rose-500 hover:from-orange-400 hover:to-rose-400 text-white text-xs sm:text-sm font-extrabold flex items-center gap-1.5 transition-colors shadow-lg whitespace-nowrap"
+                >
+                  <Flame className="w-4 h-4" />
+                  <span>全画面・爆走モード</span>
                 </button>
               )}
               <button

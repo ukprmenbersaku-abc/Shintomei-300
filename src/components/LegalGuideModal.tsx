@@ -10,12 +10,12 @@ export const LegalGuideModal: React.FC<LegalGuideModalProps> = ({ isOpen, onClos
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-40 flex items-center justify-center p-4 bg-[#05080f]/75 pointer-events-auto">
-      <div className="w-full max-w-lg rounded-2xl bg-[#0c121e] border border-slate-700 shadow-2xl overflow-hidden text-slate-100">
-        <div className="px-5 py-4 bg-[#172033] border-b border-slate-700/80 flex items-center justify-between">
+    <div className="fixed inset-0 z-40 flex items-center justify-center p-3 sm:p-4 pt-safe pb-safe px-safe bg-[#05080f]/75 pointer-events-auto">
+      <div className="w-full max-w-lg max-h-[92dvh] overflow-y-auto rounded-2xl bg-[#0c121e] border border-slate-700 shadow-2xl text-slate-100">
+        <div className="px-5 py-3.5 sm:py-4 bg-[#172033] border-b border-slate-700/80 flex items-center justify-between">
           <div className="flex items-center gap-2.5">
             <AlertTriangle className="w-5 h-5 text-amber-400" />
-            <h2 className="font-bold text-base text-white">現実の高速道路における法定速度のご案内</h2>
+            <h2 className="font-bold text-sm sm:text-base text-white">現実の高速道路における法定速度のご案内</h2>
           </div>
           <button
             type="button"
@@ -27,7 +27,7 @@ export const LegalGuideModal: React.FC<LegalGuideModalProps> = ({ isOpen, onClos
           </button>
         </div>
 
-        <div className="p-5 space-y-4 text-sm leading-relaxed text-slate-300">
+        <div className="p-4 sm:p-5 space-y-3 sm:space-y-4 text-sm leading-relaxed text-slate-300">
           <p className="text-slate-200 font-medium">
             ゲーム内の制限速度は夢の <span className="text-amber-300 font-bold tabular-nums">300 km/h</span>
             に設定されていますが、現実の新東名高速道路では道路交通法が適用されます。

@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { CAR_PAINTS, TRAFFIC_SPECS } from './constants';
+import { CAR_PAINTS, PARKING_BAY_COORDS, TRAFFIC_SPECS } from './constants';
 import { CarPaintId, TrafficArchetype } from '../types/game';
 import { ProceduralTexturePack } from './textures';
 
@@ -1207,31 +1207,93 @@ function addPlazaParkedVehicles(
   });
 }
 
+function addPlayerParkingBay(group: THREE.Group, x: number, z: number): void {
+  const lineMat = new THREE.MeshStandardMaterial({
+    color: 0x10b981,
+    emissive: 0x10b981,
+    emissiveIntensity: 1.4,
+    roughness: 0.35,
+  });
+  const padMat = new THREE.MeshStandardMaterial({
+    color: 0x064e3b,
+    emissive: 0x065f46,
+    emissiveIntensity: 0.45,
+    transparent: true,
+    opacity: 0.52,
+    roughness: 0.8,
+  });
+
+  const bayW = 4.2;
+  const bayL = 7.4;
+
+  // Translucent emerald bay highlight on asphalt
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(bayW - 0.25, bayL - 0.25), padMat);
+  floor.rotation.x = -Math.PI / 2;
+  floor.position.set(x, 0.032, z);
+  group.add(floor);
+
+  // Crisp glowing U-frame lines (open on +Z entry side and -Z exit side)
+  const leftLine = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.025, bayL), lineMat);
+  leftLine.position.set(x - bayW * 0.5, 0.038, z);
+  group.add(leftLine);
+
+  const rightLine = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.025, bayL), lineMat);
+  rightLine.position.set(x + bayW * 0.5, 0.038, z);
+  group.add(rightLine);
+
+  const frontLine = new THREE.Mesh(new THREE.BoxGeometry(bayW + 0.18, 0.025, 0.2), lineMat);
+  frontLine.position.set(x, 0.038, z - bayL * 0.5);
+  group.add(frontLine);
+
+  const rearLine = new THREE.Mesh(new THREE.BoxGeometry(bayW + 0.18, 0.025, 0.14), lineMat);
+  rearLine.position.set(x, 0.038, z + bayL * 0.5);
+  group.add(rearLine);
+
+  // Subtle yellow/black wheel stopper curb at the front (-Z) end
+  const stopper = new THREE.Mesh(
+    new THREE.BoxGeometry(2.4, 0.11, 0.18),
+    new THREE.MeshStandardMaterial({ color: 0xf59e0b, roughness: 0.6 }),
+  );
+  stopper.position.set(x, 0.055, z - bayL * 0.5 + 0.45);
+  group.add(stopper);
+
+  // Roadside "P" illuminated pole beacon beside the left edge of the bay
+  const pole = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.06, 0.07, 2.7, 8),
+    new THREE.MeshStandardMaterial({ color: 0x94a3b8, metalness: 0.6, roughness: 0.4 }),
+  );
+  pole.position.set(x - bayW * 0.5 - 0.45, 1.35, z - bayL * 0.35);
+  group.add(pole);
+
+  const badge = new THREE.Mesh(
+    new THREE.BoxGeometry(0.95, 0.95, 0.16),
+    new THREE.MeshStandardMaterial({ color: 0x059669, emissive: 0x10b981, emissiveIntensity: 1.1, roughness: 0.3 }),
+  );
+  badge.position.set(x - bayW * 0.5 - 0.45, 2.75, z - bayL * 0.35);
+  group.add(badge);
+
+  const pVertical = new THREE.Mesh(
+    new THREE.BoxGeometry(0.12, 0.55, 0.2),
+    new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xffffff, emissiveIntensity: 0.9 }),
+  );
+  pVertical.position.set(x - bayW * 0.5 - 0.58, 2.75, z - bayL * 0.35);
+  group.add(pVertical);
+
+  const pLoop = new THREE.Mesh(
+    new THREE.BoxGeometry(0.32, 0.28, 0.2),
+    new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xffffff, emissiveIntensity: 0.9 }),
+  );
+  pLoop.position.set(x - bayW * 0.5 - 0.41, 2.88, z - bayL * 0.35);
+  group.add(pLoop);
+}
+
 export function createGoreNoseAssembly(
   textures: ProceduralTexturePack,
   mode: 'diverge' | 'merge',
 ): THREE.Group {
   const g = new THREE.Group();
 
-  // Yellow & black impact attenuator cushion drums at gore tip
-  const drumMat = new THREE.MeshStandardMaterial({ color: 0xf59e0b, roughness: 0.45 });
-  const stripeMat = new THREE.MeshStandardMaterial({ color: 0x18181b, roughness: 0.7 });
-  for (let i = 0; i < 3; i++) {
-    const drum = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.46, 0.92, 12), drumMat);
-    drum.position.set(0, 0.46, -i * 1.05);
-    g.add(drum);
-
-    const band = new THREE.Mesh(new THREE.CylinderGeometry(0.44, 0.44, 0.2, 12), stripeMat);
-    band.position.set(0, 0.62, -i * 1.05);
-    g.add(band);
-  }
-
-  // Pole + Illuminated Sign facing approaching traffic (+Z)
   const poleMat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, metalness: 0.65, roughness: 0.4 });
-  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.11, 3.6, 8), poleMat);
-  pole.position.set(0, 1.8, -2.5);
-  g.add(pole);
-
   const tex = mode === 'diverge' ? textures.goreSplitSignTexture : textures.mergeWarningSignTexture;
   const signMat = new THREE.MeshStandardMaterial({
     map: tex,
@@ -1241,24 +1303,91 @@ export function createGoreNoseAssembly(
     roughness: 0.4,
   });
   const backMat = new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.6 });
-  const board = new THREE.Mesh(new THREE.BoxGeometry(3.6, 1.75, 0.14), [
-    backMat,
-    backMat,
-    backMat,
-    backMat,
-    signMat,
-    backMat,
-  ]);
-  board.position.set(0, 3.55, -2.5);
-  g.add(board);
 
-  // Amber flashing beacon on top of pole
-  const beacon = new THREE.Mesh(
-    new THREE.SphereGeometry(0.18, 10, 8),
-    new THREE.MeshStandardMaterial({ color: 0xfbbf24, emissive: 0xf59e0b, emissiveIntensity: 2.2 }),
-  );
-  beacon.position.set(0, 4.6, -2.5);
-  g.add(beacon);
+  if (mode === 'diverge') {
+    // Yellow & black impact attenuator cushion drums at diverge gore tip
+    const drumMat = new THREE.MeshStandardMaterial({ color: 0xf59e0b, roughness: 0.45 });
+    const stripeMat = new THREE.MeshStandardMaterial({ color: 0x18181b, roughness: 0.7 });
+    for (let i = 0; i < 3; i++) {
+      const drum = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.46, 0.92, 12), drumMat);
+      drum.position.set(0, 0.46, -i * 1.05);
+      g.add(drum);
+
+      const band = new THREE.Mesh(new THREE.CylinderGeometry(0.44, 0.44, 0.2, 12), stripeMat);
+      band.position.set(0, 0.62, -i * 1.05);
+      g.add(band);
+    }
+
+    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.11, 3.6, 8), poleMat);
+    pole.position.set(0, 1.8, -2.5);
+    g.add(pole);
+
+    const board = new THREE.Mesh(new THREE.BoxGeometry(3.6, 1.75, 0.14), [
+      backMat,
+      backMat,
+      backMat,
+      backMat,
+      signMat,
+      backMat,
+    ]);
+    board.position.set(0, 3.55, -2.5);
+    g.add(board);
+
+    const beacon = new THREE.Mesh(
+      new THREE.SphereGeometry(0.18, 10, 8),
+      new THREE.MeshStandardMaterial({ color: 0xfbbf24, emissive: 0xf59e0b, emissiveIntensity: 2.2 }),
+    );
+    beacon.position.set(0, 4.6, -2.5);
+    g.add(beacon);
+  } else {
+    // Merge gore: sign pole right at the downstream island tip (z = +0.8), plus slim flexible bollards along zebra gore (-Z)
+    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.11, 3.6, 8), poleMat);
+    pole.position.set(0, 1.8, 0.8);
+    g.add(pole);
+
+    const board = new THREE.Mesh(new THREE.BoxGeometry(3.4, 1.65, 0.14), [
+      backMat,
+      backMat,
+      backMat,
+      backMat,
+      signMat,
+      backMat,
+    ]);
+    board.position.set(0, 3.55, 0.8);
+    g.add(board);
+
+    const beacon = new THREE.Mesh(
+      new THREE.SphereGeometry(0.18, 10, 8),
+      new THREE.MeshStandardMaterial({ color: 0xfbbf24, emissive: 0xf59e0b, emissiveIntensity: 2.2 }),
+    );
+    beacon.position.set(0, 4.55, 0.8);
+    g.add(beacon);
+
+    // Slim orange reflective flexible bollards down the painted merge gore chevron wedge
+    const bollardMat = new THREE.MeshStandardMaterial({
+      color: 0xf97316,
+      emissive: 0xea580c,
+      emissiveIntensity: 0.45,
+      roughness: 0.4,
+    });
+    const bandMat = new THREE.MeshStandardMaterial({
+      color: 0xf8fafc,
+      emissive: 0xffffff,
+      emissiveIntensity: 0.4,
+      roughness: 0.3,
+    });
+    for (let i = 0; i < 4; i++) {
+      const bz = -2.8 - i * 4.6;
+      const bx = i * 0.22; // Follows tapering gore centerline toward mainline edge
+      const bollard = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.11, 0.82, 8), bollardMat);
+      bollard.position.set(bx, 0.41, bz);
+      g.add(bollard);
+
+      const stripe = new THREE.Mesh(new THREE.CylinderGeometry(0.086, 0.086, 0.16, 8), bandMat);
+      stripe.position.set(bx, 0.62, bz);
+      g.add(stripe);
+    }
+  }
 
   return g;
 }
@@ -1378,6 +1507,7 @@ export function createSurugaSaComplex(textures: ProceduralTexturePack): THREE.Gr
 
   addFuelStation(group, -37.5, -76, 0xea580c, 0x0284c7);
   addPlazaParkedVehicles(group, -41.5, -21.5, [-42, -26, -12, 8, 22, 38], [-34, -8, 18, 44]);
+  addPlayerParkingBay(group, PARKING_BAY_COORDS.sa.laneOffset, PARKING_BAY_COORDS.sa.ds);
   return group;
 }
 
@@ -1465,7 +1595,8 @@ export function createShimizuPaComplex(textures: ProceduralTexturePack): THREE.G
   signBoard.position.set(-35.4, 8.0, -4);
   group.add(signBoard);
 
-  addPlazaParkedVehicles(group, -29.2, -17.8, [-28, -12, -2, 26], [-22, 4, 28]);
+  addPlazaParkedVehicles(group, -29.2, -17.8, [-28, -14, 14, 26], [-22, 4, 28]);
+  addPlayerParkingBay(group, PARKING_BAY_COORDS.pa.laneOffset, PARKING_BAY_COORDS.pa.ds);
   return group;
 }
 
@@ -1553,6 +1684,7 @@ export function createShizuokaSaComplex(textures: ProceduralTexturePack): THREE.
 
   addFuelStation(group, -37.5, -76, 0xb91c1c, 0xf8fafc);
   addPlazaParkedVehicles(group, -41.5, -21.5, [-46, -28, -14, 12, 28, 44], [-36, -10, 14, 40]);
+  addPlayerParkingBay(group, PARKING_BAY_COORDS.sa.laneOffset, PARKING_BAY_COORDS.sa.ds);
   return group;
 }
 
@@ -1633,6 +1765,7 @@ export function createKakegawaPaComplex(textures: ProceduralTexturePack): THREE.
   group.add(signBoard);
 
   addPlazaParkedVehicles(group, -29.2, -17.8, [-22, -8, 10, 22], [-18, 10]);
+  addPlayerParkingBay(group, PARKING_BAY_COORDS.pa.laneOffset, PARKING_BAY_COORDS.pa.ds);
   return group;
 }
 
@@ -1722,59 +1855,191 @@ export function createHamamatsuSaComplex(textures: ProceduralTexturePack): THREE
 
   addFuelStation(group, -37.5, -76, 0x0284c7, 0xf97316);
   addPlazaParkedVehicles(group, -41.5, -21.5, [-42, -26, -12, 10, 26, 40], [-34, -8, 16, 42]);
+  addPlayerParkingBay(group, PARKING_BAY_COORDS.sa.laneOffset, PARKING_BAY_COORDS.sa.ds);
   return group;
 }
 
-export function createJctOverpass(): THREE.Group {
+export const JCT_RAMP_LOCAL_POINTS: THREE.Vector3[] = [
+  new THREE.Vector3(-20.2, 0.02, 105),
+  new THREE.Vector3(-22.0, 0.14, 80),
+  new THREE.Vector3(-27.5, 1.5, 52),
+  new THREE.Vector3(-33.5, 4.8, 22),
+  new THREE.Vector3(-27.5, 8.6, -8),
+  new THREE.Vector3(-8.0, 10.9, -26),
+  new THREE.Vector3(20.0, 11.2, -37),
+  new THREE.Vector3(54.0, 9.8, -50),
+  new THREE.Vector3(90.0, 6.4, -68),
+];
+
+export function createJctRampCurve(): THREE.CatmullRomCurve3 {
+  return new THREE.CatmullRomCurve3(JCT_RAMP_LOCAL_POINTS, false, 'catmullrom', 0.5);
+}
+
+function buildExtrudedRibbonFromCurve(
+  curve: THREE.CatmullRomCurve3,
+  steps: number,
+  halfWidth: number,
+  yOffset: number,
+  thickness: number,
+): THREE.BufferGeometry {
+  const pos: number[] = [];
+  const norm: number[] = [];
+  const uv: number[] = [];
+  const idx: number[] = [];
+  const up = new THREE.Vector3(0, 1, 0);
+
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps;
+    const pt = curve.getPointAt(t);
+    const tan = curve.getTangentAt(t).normalize();
+    const right = new THREE.Vector3().crossVectors(tan, up).normalize();
+    const nUp = new THREE.Vector3().crossVectors(right, tan).normalize();
+
+    const lx = pt.x - right.x * halfWidth;
+    const ly = pt.y + yOffset;
+    const lz = pt.z - right.z * halfWidth;
+    const rx = pt.x + right.x * halfWidth;
+    const ry = pt.y + yOffset;
+    const rz = pt.z + right.z * halfWidth;
+
+    if (thickness <= 0.01) {
+      // Flat top surface ribbon (asphalt or lane marking)
+      pos.push(lx, ly, lz, rx, ry, rz);
+      norm.push(nUp.x, nUp.y, nUp.z, nUp.x, nUp.y, nUp.z);
+      uv.push(0, t * 18, 1, t * 18);
+    } else {
+      // 4-vert box cross-section (top-left, top-right, bottom-right, bottom-left)
+      pos.push(
+        lx, ly, lz,
+        rx, ry, rz,
+        rx, ry - thickness, rz,
+        lx, ly - thickness, lz,
+      );
+      norm.push(0, 1, 0, 0, 1, 0, 0, -1, 0, 0, -1, 0);
+      uv.push(0, t * 18, 1, t * 18, 1, t * 18, 0, t * 18);
+    }
+  }
+
+  if (thickness <= 0.01) {
+    for (let i = 0; i < steps; i++) {
+      const a = i * 2;
+      const b = a + 1;
+      const c = (i + 1) * 2;
+      const d = c + 1;
+      idx.push(a, c, b, b, c, d);
+    }
+  } else {
+    for (let i = 0; i < steps; i++) {
+      const a = i * 4;
+      const b = (i + 1) * 4;
+      // Top
+      idx.push(a, b, a + 1, a + 1, b, b + 1);
+      // Right
+      idx.push(a + 1, b + 1, a + 2, a + 2, b + 1, b + 2);
+      // Bottom
+      idx.push(a + 2, b + 2, a + 3, a + 3, b + 2, b + 3);
+      // Left
+      idx.push(a + 3, b + 3, a, a, b + 3, b);
+    }
+  }
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.setAttribute('normal', new THREE.Float32BufferAttribute(norm, 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  geo.setIndex(idx);
+  geo.computeVertexNormals();
+  return geo;
+}
+
+export function createJctOverpass(textures?: ProceduralTexturePack): THREE.Group {
   const group = new THREE.Group();
   const concreteMat = new THREE.MeshStandardMaterial({ color: 0x808790, roughness: 0.85 });
   const parapetMat = new THREE.MeshStandardMaterial({ color: 0x9ca3af, roughness: 0.8 });
-  const asphaltMat = new THREE.MeshStandardMaterial({ color: 0x262a31, roughness: 0.9 });
+  const asphaltMat = new THREE.MeshStandardMaterial({
+    map: textures?.rampAsphaltTexture ?? null,
+    color: textures ? 0xffffff : 0x262a31,
+    roughness: 0.9,
+  });
 
-  // Sweeping JCT Ramp curving cleanly from left gore split (X=-14, Z=+135), rising to Y=+10.8m & crossing over mainline!
-  const rampPoints = [
-    new THREE.Vector3(-12.5, 0.1, 130),
-    new THREE.Vector3(-22, 1.8, 85),
-    new THREE.Vector3(-34, 5.2, 42),
-    new THREE.Vector3(-36, 8.8, 4),
-    new THREE.Vector3(-16, 10.8, -22),
-    new THREE.Vector3(12, 11.0, -34),
-    new THREE.Vector3(48, 9.6, -48),
-    new THREE.Vector3(82, 6.2, -68),
-  ];
-  const curve = new THREE.CatmullRomCurve3(rampPoints);
+  const curve = createJctRampCurve();
+  const steps = 84;
 
-  const deckGeo = new THREE.TubeGeometry(curve, 36, 4.1, 4, false);
-  deckGeo.scale(1, 0.28, 1);
-  const deck = new THREE.Mesh(deckGeo, concreteMat);
-  group.add(deck);
+  // Concrete structural girder box deck (total width 8.8m)
+  const deckGeo = buildExtrudedRibbonFromCurve(curve, steps, 4.4, -0.05, 1.15);
+  group.add(new THREE.Mesh(deckGeo, concreteMat));
 
-  // Asphalt top ribbon along the elevated curve
-  const roadStripGeo = new THREE.TubeGeometry(curve, 36, 3.5, 4, false);
-  roadStripGeo.scale(1, 0.12, 1);
-  const roadStrip = new THREE.Mesh(roadStripGeo, asphaltMat);
-  roadStrip.position.y = 0.72;
-  group.add(roadStrip);
+  // Smooth flat drivable asphalt top deck (8.0m wide, flush with y = curve.y + 0.02)
+  const asphaltGeo = buildExtrudedRibbonFromCurve(curve, steps, 4.0, 0.02, 0);
+  group.add(new THREE.Mesh(asphaltGeo, asphaltMat));
 
-  // Concrete piers supporting the JCT viaduct strictly outside road shoulders
-  const pierGeo = new THREE.CylinderGeometry(1.05, 1.25, 11.4, 10);
+  // Left & Right concrete parapet barrier walls along the full elevated viaduct
+  const up = new THREE.Vector3(0, 1, 0);
+  const leftRailPts: THREE.Vector3[] = [];
+  const rightRailPts: THREE.Vector3[] = [];
+  for (let i = 0; i <= 48; i++) {
+    const t = i / 48;
+    const pt = curve.getPointAt(t);
+    const tan = curve.getTangentAt(t).normalize();
+    const right = new THREE.Vector3().crossVectors(tan, up).normalize();
+    leftRailPts.push(pt.clone().addScaledVector(right, -4.15).add(new THREE.Vector3(0, 0.52, 0)));
+    rightRailPts.push(pt.clone().addScaledVector(right, 4.15).add(new THREE.Vector3(0, 0.52, 0)));
+  }
+  const leftWallGeo = new THREE.TubeGeometry(new THREE.CatmullRomCurve3(leftRailPts), 48, 0.34, 4, false);
+  leftWallGeo.scale(1, 1.4, 1);
+  const rightWallGeo = new THREE.TubeGeometry(new THREE.CatmullRomCurve3(rightRailPts), 48, 0.34, 4, false);
+  rightWallGeo.scale(1, 1.4, 1);
+  group.add(new THREE.Mesh(leftWallGeo, parapetMat));
+  group.add(new THREE.Mesh(rightWallGeo, parapetMat));
+
+  // Concrete piers supporting the JCT viaduct strictly outside mainline shoulders (X < -9.5 or X > +25.5)
+  const pierGeo = new THREE.CylinderGeometry(1.05, 1.25, 12.4, 10);
   for (const [px, pz, py] of [
-    [-34, 24, 3.8],
-    [-12, -22, 5.4],
-    [27, -40, 5.4],
-    [60, -56, 4.0],
+    [-33.5, 22, -1.6],
+    [-12.5, -24, 4.2],
+    [28.5, -40, 4.6],
+    [66.0, -56, 2.8],
   ]) {
     const pier = new THREE.Mesh(pierGeo, concreteMat);
     pier.position.set(px, py, pz);
     group.add(pier);
   }
 
-  // Parapet wall along the crossing span above mainline
-  const overpassRail = new THREE.Mesh(new THREE.BoxGeometry(66, 1.1, 0.35), parapetMat);
-  overpassRail.position.set(14, 12.1, -34);
-  overpassRail.rotation.y = 0.36;
-  group.add(overpassRail);
+  // Green JCT Branch Destination Portal Arch near end of viaduct (t = 0.88)
+  const portalT = 0.88;
+  const portalPt = curve.getPointAt(portalT);
+  const portalTan = curve.getTangentAt(portalT).normalize();
+  const portalYaw = Math.atan2(-portalTan.x, -portalTan.z);
+  const portalGroup = new THREE.Group();
+  portalGroup.position.copy(portalPt);
+  portalGroup.rotation.y = portalYaw;
 
+  const steelMat = new THREE.MeshStandardMaterial({ color: 0x64748b, metalness: 0.65, roughness: 0.35 });
+  const pillarGeo = new THREE.CylinderGeometry(0.18, 0.22, 6.0, 8);
+  const pL = new THREE.Mesh(pillarGeo, steelMat);
+  pL.position.set(-4.35, 3.0, 0);
+  portalGroup.add(pL);
+  const pR = new THREE.Mesh(pillarGeo, steelMat);
+  pR.position.set(4.35, 3.0, 0);
+  portalGroup.add(pR);
+
+  const beam = new THREE.Mesh(new THREE.BoxGeometry(9.2, 0.36, 0.36), steelMat);
+  beam.position.set(0, 5.8, 0);
+  portalGroup.add(beam);
+
+  const signBoard = new THREE.Mesh(
+    new THREE.BoxGeometry(6.8, 1.9, 0.2),
+    new THREE.MeshStandardMaterial({
+      color: 0x00663c,
+      emissive: 0x059669,
+      emissiveIntensity: 0.45,
+      roughness: 0.4,
+    }),
+  );
+  signBoard.position.set(0, 5.65, 0.15);
+  portalGroup.add(signBoard);
+
+  group.add(portalGroup);
   return group;
 }
 

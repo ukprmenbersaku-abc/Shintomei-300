@@ -20,6 +20,14 @@ export class HighwayAudioEngine {
   private screechFilter: BiquadFilterNode | null = null;
   private screechGain: GainNode | null = null;
 
+  private brakeLowFilter: BiquadFilterNode | null = null;
+  private brakeLowGain: GainNode | null = null;
+  private brakeRaspFilter: BiquadFilterNode | null = null;
+  private brakeRaspGain: GainNode | null = null;
+
+  private reverseOsc: OscillatorNode | null = null;
+  private reverseGain: GainNode | null = null;
+
   private initialized = false;
   private muted = false;
 
@@ -164,6 +172,51 @@ export class HighwayAudioEngine {
     this.screechFilter = screechFilter;
     this.screechGain = screechGain;
 
+    // Brake pad friction & rotor deceleration sound (active on all brake presses while moving)
+    const brakeLowSrc = ctx.createBufferSource();
+    brakeLowSrc.buffer = noiseBuffer;
+    brakeLowSrc.loop = true;
+    const brakeLowFilter = ctx.createBiquadFilter();
+    brakeLowFilter.type = 'bandpass';
+    brakeLowFilter.frequency.value = 420;
+    brakeLowFilter.Q.value = 1.4;
+    const brakeLowGain = ctx.createGain();
+    brakeLowGain.gain.value = 0;
+    brakeLowSrc.connect(brakeLowFilter);
+    brakeLowFilter.connect(brakeLowGain);
+    brakeLowGain.connect(master);
+    brakeLowSrc.start();
+    this.brakeLowFilter = brakeLowFilter;
+    this.brakeLowGain = brakeLowGain;
+
+    const brakeRaspSrc = ctx.createBufferSource();
+    brakeRaspSrc.buffer = noiseBuffer;
+    brakeRaspSrc.loop = true;
+    const brakeRaspFilter = ctx.createBiquadFilter();
+    brakeRaspFilter.type = 'bandpass';
+    brakeRaspFilter.frequency.value = 1850;
+    brakeRaspFilter.Q.value = 4.2;
+    const brakeRaspGain = ctx.createGain();
+    brakeRaspGain.gain.value = 0;
+    brakeRaspSrc.connect(brakeRaspFilter);
+    brakeRaspFilter.connect(brakeRaspGain);
+    brakeRaspGain.connect(master);
+    brakeRaspSrc.start();
+    this.brakeRaspFilter = brakeRaspFilter;
+    this.brakeRaspGain = brakeRaspGain;
+
+    // Reverse gear straight-cut transmission whine
+    const reverseOsc = ctx.createOscillator();
+    reverseOsc.type = 'triangle';
+    reverseOsc.frequency.value = 480;
+    const reverseGain = ctx.createGain();
+    reverseGain.gain.value = 0;
+    reverseOsc.connect(reverseGain);
+    reverseGain.connect(master);
+    reverseOsc.start();
+    this.reverseOsc = reverseOsc;
+    this.reverseGain = reverseGain;
+
     this.initialized = true;
   }
 
@@ -172,6 +225,8 @@ export class HighwayAudioEngine {
     speedKmh: number;
     rpm: number;
     throttle: number;
+    brake?: number;
+    isReversing?: boolean;
     rainAmount: number;
     tireSlip: number;
     inTunnel: boolean;
@@ -185,6 +240,9 @@ export class HighwayAudioEngine {
       this.windGain?.gain.setTargetAtTime(0, now, 0.08);
       this.rainGain?.gain.setTargetAtTime(0, now, 0.08);
       this.screechGain?.gain.setTargetAtTime(0, now, 0.08);
+      this.brakeLowGain?.gain.setTargetAtTime(0, now, 0.06);
+      this.brakeRaspGain?.gain.setTargetAtTime(0, now, 0.06);
+      this.reverseGain?.gain.setTargetAtTime(0, now, 0.06);
       return;
     }
 
@@ -208,8 +266,10 @@ export class HighwayAudioEngine {
     this.turboOsc?.frequency.setTargetAtTime(turboFreq, now, 0.05);
     this.turboGain?.gain.setTargetAtTime(turboVol, now, 0.06);
 
+    const absSpeedKmh = Math.abs(params.speedKmh);
+
     // Wind rush scales strongly above 100 km/h
-    const speedRatio = Math.max(0, Math.min(1, params.speedKmh / 300));
+    const speedRatio = Math.max(0, Math.min(1, absSpeedKmh / 300));
     const windVol = Math.pow(speedRatio, 1.8) * 0.24 * (params.inTunnel ? 1.3 : 1.0);
     this.windFilter?.frequency.setTargetAtTime(280 + speedRatio * 950, now, 0.06);
     this.windGain?.gain.setTargetAtTime(windVol, now, 0.06);
@@ -221,6 +281,22 @@ export class HighwayAudioEngine {
     // Tire screech
     const screechVol = Math.max(0, Math.min(0.14, params.tireSlip * 0.16));
     this.screechGain?.gain.setTargetAtTime(screechVol, now, 0.04);
+
+    // Brake friction sound (distinct hydraulic pad bite + high rotor friction while braking)
+    const brakeInput = Math.max(0, Math.min(1, params.brake ?? 0));
+    const brakeMovingFactor = Math.max(0, Math.min(1, absSpeedKmh / 22));
+    const brakeStrength = brakeInput * (0.25 + 0.75 * brakeMovingFactor) * (absSpeedKmh > 1.2 ? 1 : 0);
+    this.brakeLowFilter?.frequency.setTargetAtTime(280 + speedRatio * 480, now, 0.04);
+    this.brakeLowGain?.gain.setTargetAtTime(brakeStrength * 0.18 * tunnelBoost, now, 0.035);
+    this.brakeRaspFilter?.frequency.setTargetAtTime(1400 + speedRatio * 1450, now, 0.04);
+    this.brakeRaspGain?.gain.setTargetAtTime(brakeStrength * 0.065 * tunnelBoost, now, 0.035);
+
+    // Reverse gear straight-cut gear whine
+    const revSpeedRatio = params.isReversing ? Math.max(0, Math.min(1, absSpeedKmh / 40)) : 0;
+    const revFreq = 390 + revSpeedRatio * 560;
+    const revVol = params.isReversing && absSpeedKmh > 0.8 ? 0.025 + revSpeedRatio * 0.045 : 0;
+    this.reverseOsc?.frequency.setTargetAtTime(revFreq, now, 0.04);
+    this.reverseGain?.gain.setTargetAtTime(revVol, now, 0.05);
   }
 
   public playImpact(severity: number): void {
@@ -242,10 +318,15 @@ export class HighwayAudioEngine {
     osc.stop(now + 0.27);
   }
 
-  public playChime(type: 'nearMiss' | 'alert'): void {
+  public playChime(type: 'nearMiss' | 'alert' | 'park'): void {
     if (!this.initialized || !this.ctx || !this.masterGain || this.muted) return;
     const now = this.ctx.currentTime;
-    const notes = type === 'nearMiss' ? [660, 880] : [523.25, 659.25];
+    const notes =
+      type === 'nearMiss'
+        ? [660, 880]
+        : type === 'park'
+          ? [523.25, 659.25, 783.99]
+          : [523.25, 659.25];
 
     notes.forEach((freq, i) => {
       if (!this.ctx || !this.masterGain) return;

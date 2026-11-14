@@ -24,12 +24,14 @@ import {
   EXPRESSWAY,
   HUMOROUS_SAFETY_TIPS,
   LED_BOARD_MESSAGES,
+  RouteMilestone,
   TRAFFIC_PRESETS,
   TRAFFIC_SPECS,
   WEATHER_CONFIG,
 } from './constants';
 import { HighwayAudioEngine } from './audio';
 import {
+  getJctCurveLength,
   getNextMilestoneAhead,
   getOffMainlineBounds,
   getSurfaceElevationAt,
@@ -40,6 +42,7 @@ import {
   roadCenterX,
   roadElevationDY,
   roadElevationY,
+  sampleJctOverpassWorld,
 } from './highwayWorld';
 import { createPlayerCar, createTrafficCar, PlayerCarRig, TrafficCarRig } from './models';
 import { createProceduralTexturePack, ProceduralTexturePack } from './textures';
@@ -186,6 +189,8 @@ export class HighwayEngine {
   private bloomPass: UnrealBloomPass | null = null;
   private speedFxPass: ShaderPass | null = null;
   private composerTarget: THREE.WebGLRenderTarget | null = null;
+  private resizeObserver: ResizeObserver | null = null;
+  private resizeFollowupTimer = 0;
 
   private scene: THREE.Scene;
   private camera: THREE.PerspectiveCamera;
@@ -257,6 +262,17 @@ export class HighwayEngine {
   private playerRoll = 0;
   private wheelSpinAngle = 0;
   private wiperPhase = 0;
+  private isReversing = false;
+  private reverseHoldTimer = 0;
+  private isParked = false;
+  private saParkAwardedId = '';
+  private jctState: {
+    milestone: RouteMilestone;
+    worldS: number;
+    t: number;
+    lateralOffset: number;
+  } | null = null;
+  private jctClearTriggeredForS = -9999;
 
   // Stats
   private distanceM = 0;
@@ -395,6 +411,7 @@ export class HighwayEngine {
     this.textures = createProceduralTexturePack(this.renderer);
     this.world = new HighwayWorld(this.scene, this.textures, this.isSoftwareGl);
     this.playerCar = createPlayerCar(this.textures, CarPaintId.ChampionshipWhite, this.isSoftwareGl);
+    this.playerCar.root.rotation.order = 'YXZ';
     this.scene.add(this.playerCar.root);
 
     // Ultra-HD Real Dynamic SpotLight Headlights & Rear Brake Light on Player Car
@@ -431,6 +448,12 @@ export class HighwayEngine {
     }
 
     window.addEventListener('resize', this.handleResize);
+    window.addEventListener('orientationchange', this.handleOrientationChange);
+    window.visualViewport?.addEventListener('resize', this.handleResize);
+    if (typeof ResizeObserver !== 'undefined') {
+      this.resizeObserver = new ResizeObserver(() => this.handleResize());
+      this.resizeObserver.observe(this.container);
+    }
     this.lastTimeMs = performance.now();
     this.scheduleNextFrame();
   }
@@ -470,10 +493,18 @@ export class HighwayEngine {
     this.onContextLost?.();
   };
 
+  private handleOrientationChange = () => {
+    this.handleResize();
+    requestAnimationFrame(() => this.handleResize());
+    window.clearTimeout(this.resizeFollowupTimer);
+    this.resizeFollowupTimer = window.setTimeout(() => this.handleResize(), 180);
+  };
+
   private handleResize = () => {
     if (this.disposed) return;
     const w = this.container.clientWidth || window.innerWidth;
     const h = this.container.clientHeight || window.innerHeight;
+    if (w < 2 || h < 2) return;
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(w, h);
@@ -655,6 +686,12 @@ export class HighwayEngine {
     this.playerRelYaw = 0;
     this.playerSteer = 0;
     this.playerGear = 4;
+    this.isReversing = false;
+    this.reverseHoldTimer = 0;
+    this.isParked = false;
+    this.saParkAwardedId = '';
+    this.jctState = null;
+    this.jctClearTriggeredForS = -9999;
     this.distanceM = 0;
     this.maxSpeedKmh = 120;
     this.overtakeCount = 0;
@@ -670,17 +707,26 @@ export class HighwayEngine {
     this.resetTrafficPositions();
     this.pushSafetyBanner({
       title: '【走行スタート】新東名 制限速度300km/h 特例区間',
-      body: '他車は120km/h（大型車80〜90km/h）で走行中！左ランプからNEOPASAへ入庫、または各ICから流出するとゴールクリアになります！',
+      body: '他車は120km/h（大型車80〜90km/h）で走行中！左からNEOPASA駐車・JCT高架分岐・各IC出口クリアに挑戦できます！',
       tone: 'info',
     });
   }
 
   public resumeAfterIcClear(): void {
-    this.playerS += 95;
+    if (this.jctState) {
+      this.playerS = this.jctState.worldS + 135;
+      this.jctState = null;
+    } else {
+      this.playerS += 95;
+    }
     this.playerLaneOffset = -3.75;
     this.playerLatVel = 0;
     this.playerRelYaw = 0;
     this.playerSpeedMs = 120 / 3.6;
+    this.playerGear = 4;
+    this.isReversing = false;
+    this.reverseHoldTimer = 0;
+    this.isParked = false;
     this.camInitialized = false;
     this.running = true;
     this.pushSafetyBanner({
@@ -802,8 +848,9 @@ export class HighwayEngine {
     const fujiOpacity = baseFuji * (1 - this.curTunnelBlend * 0.9);
 
     const isUltra = this.qualityMode === QualityMode.Ultra;
+    const worldCenterS = this.jctState ? this.jctState.worldS : this.playerS;
     this.world.update(
-      this.playerS,
+      worldCenterS,
       this.playerLaneOffset,
       this.playerSpeedMs,
       dt,
@@ -831,7 +878,7 @@ export class HighwayEngine {
         this.bloomPass.strength = this.curBloomStrength;
       }
       if (this.speedFxPass) {
-        const speedKmh = this.playerSpeedMs * 3.6;
+        const speedKmh = Math.abs(this.playerSpeedMs) * 3.6;
         const speedNorm = this.running ? THREE.MathUtils.clamp((speedKmh - 140) / 160, 0, 1) : 0;
         this.speedFxPass.uniforms.uSpeedNorm.value = speedNorm;
       }
@@ -955,7 +1002,7 @@ export class HighwayEngine {
 
   private stepPlayerPhysics(dt: number): { slipstream: boolean; tireSlip: number; absActive: boolean } {
     const wCfg = WEATHER_CONFIG[this.activeWeather];
-    const inTunnel = isTunnelAt(this.playerS);
+    const inTunnel = !this.jctState && isTunnelAt(this.playerS);
     const roadFriction = inTunnel ? 1.02 : wCfg.roadFriction;
 
     const throttle = this.input.throttle ? 1 : 0;
@@ -964,76 +1011,193 @@ export class HighwayEngine {
     const steerInput = digitalSteer !== 0 ? digitalSteer : (this.analogSteer ?? 0);
 
     let slipstream = false;
-    for (const tv of this.sameDirPool) {
-      if (!tv.active) continue;
-      const ds = tv.s - this.playerS;
-      if (ds > 6 && ds < 55 && Math.abs(tv.laneOffset - this.playerLaneOffset) < 1.85) {
-        slipstream = true;
-        break;
+    if (!this.jctState && this.playerSpeedMs > 5) {
+      for (const tv of this.sameDirPool) {
+        if (!tv.active) continue;
+        const ds = tv.s - this.playerS;
+        if (ds > 6 && ds < 55 && Math.abs(tv.laneOffset - this.playerLaneOffset) < 1.85) {
+          slipstream = true;
+          break;
+        }
       }
     }
 
-    const speedMs = Math.max(0, this.playerSpeedMs);
-    const wheelAngular = speedMs / CAR_PHYSICS.WHEEL_RADIUS_M;
-    const ratio = CAR_PHYSICS.GEAR_RATIOS[this.playerGear - 1] * CAR_PHYSICS.FINAL_DRIVE;
-    let targetRpm = (wheelAngular * ratio * 60) / (2 * Math.PI);
-    targetRpm = Math.max(CAR_PHYSICS.IDLE_RPM, Math.min(CAR_PHYSICS.REDLINE_RPM, targetRpm));
+    const preOffBounds = !this.jctState ? getOffMainlineBounds(this.playerS, this.playerLaneOffset) : null;
 
-    const prevGear = this.playerGear;
-    if (targetRpm >= CAR_PHYSICS.SHIFT_UP_RPM && this.playerGear < 6 && throttle > 0) {
-      this.playerGear++;
-    } else if (targetRpm <= CAR_PHYSICS.SHIFT_DOWN_RPM && this.playerGear > 1) {
-      this.playerGear--;
+    // SA/PA Designated Bay Parking Check
+    if (
+      preOffBounds &&
+      preOffBounds.inParkingBay &&
+      preOffBounds.activeSa &&
+      !this.isParked &&
+      !this.isReversing &&
+      throttle === 0 &&
+      Math.abs(this.playerSpeedMs) < 1.15
+    ) {
+      this.isParked = true;
+      this.playerSpeedMs = 0;
+      this.playerLatVel = 0;
+      this.playerGear = 0;
+      this.reverseHoldTimer = 0;
+      if (this.saParkAwardedId !== preOffBounds.activeSa.id) {
+        this.saParkAwardedId = preOffBounds.activeSa.id;
+        this.score += 800;
+        this.audio.playChime('park');
+        this.pushSafetyBanner({
+          title: `【${preOffBounds.activeSa.nameJa} 駐車完了！ +800pts】`,
+          body: '緑の空き枠 [P] にぴったり駐車しました！アクセルで前進発進、減速ボタン長押し(R)でバックできます。',
+          tone: 'humor',
+        });
+      }
     }
-    if (this.playerGear > prevGear && this.qualityMode === QualityMode.Ultra) {
-      this.shiftFlameTimer = 0.16;
+
+    // Release Parking on throttle or sustained reverse hold
+    if (this.isParked) {
+      if (throttle > 0) {
+        this.isParked = false;
+        this.isReversing = false;
+        this.playerGear = 1;
+        this.reverseHoldTimer = 0;
+      } else if (brake > 0) {
+        this.reverseHoldTimer += dt;
+        if (this.reverseHoldTimer >= 0.2) {
+          this.isParked = false;
+          this.isReversing = true;
+          this.playerGear = -1;
+          this.reverseHoldTimer = 0;
+        }
+      } else {
+        this.reverseHoldTimer = 0;
+      }
+    } else if (!this.isReversing) {
+      if (this.playerSpeedMs <= 0.25 && brake > 0 && throttle === 0) {
+        this.playerSpeedMs = 0;
+        this.reverseHoldTimer += dt;
+        if (this.reverseHoldTimer >= 0.26) {
+          this.isReversing = true;
+          this.playerGear = -1;
+          this.reverseHoldTimer = 0;
+        }
+      } else {
+        this.reverseHoldTimer = 0;
+      }
     }
-    this.playerRpm = THREE.MathUtils.damp(this.playerRpm, targetRpm, 12, dt);
 
-    const rpmNorm = (this.playerRpm - CAR_PHYSICS.IDLE_RPM) / (CAR_PHYSICS.REDLINE_RPM - CAR_PHYSICS.IDLE_RPM);
-    const torqueCurve = 0.68 + 0.45 * Math.sin(Math.min(1, Math.max(0, rpmNorm)) * Math.PI * 0.88);
-    const gearMultiplier = CAR_PHYSICS.GEAR_RATIOS[this.playerGear - 1] / 1.4;
+    let accelLong = 0;
+    let absActive = false;
+    let effectiveThrottle = 0;
+    let brakeAudioAmt = 0;
+    let brakeTailActive = false;
 
-    const speedKmh = speedMs * 3.6;
-    let effectiveThrottle = throttle;
-    if (speedKmh >= CAR_PHYSICS.MAX_SPEED_KMH - 0.5) {
-      effectiveThrottle = 0;
-    } else if (speedKmh > CAR_PHYSICS.MAX_SPEED_KMH - 6) {
-      effectiveThrottle *= (CAR_PHYSICS.MAX_SPEED_KMH - speedKmh) / 6;
+    if (this.isParked) {
+      this.playerSpeedMs = 0;
+      this.playerLatVel = 0;
+      this.playerGear = 0;
+      this.playerRpm = THREE.MathUtils.damp(this.playerRpm, CAR_PHYSICS.IDLE_RPM, 10, dt);
+      brakeTailActive = true;
+    } else if (this.isReversing) {
+      this.playerGear = -1;
+      const MAX_REV_MS = 40 / 3.6;
+      const absRevMs = Math.abs(Math.min(0, this.playerSpeedMs));
+      const slopePitch = this.jctState
+        ? sampleJctOverpassWorld(this.jctState.worldS, this.jctState.t, this.jctState.lateralOffset).pitch
+        : Math.atan(getSurfaceSlopeAt(this.playerS, this.playerLaneOffset));
+      const slopeGravity = CAR_PHYSICS.MASS_KG * 9.81 * Math.sin(slopePitch);
+      const rollingDrag = CAR_PHYSICS.MASS_KG * 9.81 * CAR_PHYSICS.ROLLING_RESISTANCE;
+
+      const revLimiter = Math.max(0, 1 - Math.pow(absRevMs / MAX_REV_MS, 2.2));
+      const revDriveForce = brake * (-7200) * revLimiter;
+      const forwardBrakeForce = throttle * 16800;
+      const coastResistance = this.playerSpeedMs < -0.05 ? rollingDrag * 2.4 : 0;
+
+      const netLongForce = revDriveForce + forwardBrakeForce + coastResistance - slopeGravity;
+      accelLong = netLongForce / CAR_PHYSICS.MASS_KG;
+      this.playerSpeedMs = THREE.MathUtils.clamp(this.playerSpeedMs + accelLong * dt, -MAX_REV_MS, 0.05);
+
+      if (throttle > 0 && this.playerSpeedMs >= -0.3) {
+        this.isReversing = false;
+        this.playerGear = 1;
+        this.playerSpeedMs = Math.max(0, this.playerSpeedMs);
+      }
+
+      const revTargetRpm =
+        CAR_PHYSICS.IDLE_RPM + (Math.abs(this.playerSpeedMs) / MAX_REV_MS) * 4300 + brake * 550;
+      this.playerRpm = THREE.MathUtils.damp(this.playerRpm, revTargetRpm, 12, dt);
+      effectiveThrottle = brake * 0.55;
+      brakeAudioAmt = throttle;
+      brakeTailActive = throttle > 0.1 || brake > 0.1;
+    } else {
+      if (this.playerGear < 1) this.playerGear = 1;
+      const speedMs = Math.max(0, this.playerSpeedMs);
+      const wheelAngular = speedMs / CAR_PHYSICS.WHEEL_RADIUS_M;
+      const ratio = CAR_PHYSICS.GEAR_RATIOS[this.playerGear - 1] * CAR_PHYSICS.FINAL_DRIVE;
+      let targetRpm = (wheelAngular * ratio * 60) / (2 * Math.PI);
+      targetRpm = Math.max(CAR_PHYSICS.IDLE_RPM, Math.min(CAR_PHYSICS.REDLINE_RPM, targetRpm));
+
+      const prevGear = this.playerGear;
+      if (targetRpm >= CAR_PHYSICS.SHIFT_UP_RPM && this.playerGear < 6 && throttle > 0) {
+        this.playerGear++;
+      } else if (targetRpm <= CAR_PHYSICS.SHIFT_DOWN_RPM && this.playerGear > 1) {
+        this.playerGear--;
+      }
+      if (this.playerGear > prevGear && this.qualityMode === QualityMode.Ultra) {
+        this.shiftFlameTimer = 0.16;
+      }
+      this.playerRpm = THREE.MathUtils.damp(this.playerRpm, targetRpm, 12, dt);
+
+      const rpmNorm = (this.playerRpm - CAR_PHYSICS.IDLE_RPM) / (CAR_PHYSICS.REDLINE_RPM - CAR_PHYSICS.IDLE_RPM);
+      const torqueCurve = 0.68 + 0.45 * Math.sin(Math.min(1, Math.max(0, rpmNorm)) * Math.PI * 0.88);
+      const gearMultiplier = CAR_PHYSICS.GEAR_RATIOS[this.playerGear - 1] / 1.4;
+
+      const speedKmh = speedMs * 3.6;
+      effectiveThrottle = throttle;
+      if (speedKmh >= CAR_PHYSICS.MAX_SPEED_KMH - 0.5) {
+        effectiveThrottle = 0;
+      } else if (speedKmh > CAR_PHYSICS.MAX_SPEED_KMH - 6) {
+        effectiveThrottle *= (CAR_PHYSICS.MAX_SPEED_KMH - speedKmh) / 6;
+      }
+
+      const driveForce =
+        effectiveThrottle *
+        CAR_PHYSICS.MAX_ENGINE_FORCE_N *
+        torqueCurve *
+        Math.min(2.1, gearMultiplier) *
+        (slipstream ? 1.12 : 1.0);
+      const dragFactor = slipstream ? 0.78 : 1.0;
+      const aeroDrag = 0.5 * CAR_PHYSICS.AIR_DENSITY * CAR_PHYSICS.DRAG_COEFF_AREA * speedMs * speedMs * dragFactor;
+      const rollingDrag = CAR_PHYSICS.MASS_KG * 9.81 * CAR_PHYSICS.ROLLING_RESISTANCE;
+      const slopePitch = this.jctState
+        ? sampleJctOverpassWorld(this.jctState.worldS, this.jctState.t, this.jctState.lateralOffset).pitch
+        : Math.atan(getSurfaceSlopeAt(this.playerS, this.playerLaneOffset));
+      const slopeGravity = CAR_PHYSICS.MASS_KG * 9.81 * Math.sin(slopePitch);
+
+      const downforce = CAR_PHYSICS.DOWNFORCE_COEFF * speedMs * speedMs;
+      const normalForce = CAR_PHYSICS.MASS_KG * 9.81 + downforce;
+      const maxTireForce = normalForce * roadFriction;
+
+      const requestedBrake = brake * CAR_PHYSICS.MAX_BRAKE_FORCE_N;
+      const actualBrake = Math.min(requestedBrake, maxTireForce);
+      absActive = brake > 0.5 && requestedBrake > maxTireForce * 0.92 && speedKmh > 35;
+
+      const netLongForce = driveForce - aeroDrag - rollingDrag - slopeGravity - actualBrake;
+      accelLong = netLongForce / CAR_PHYSICS.MASS_KG;
+
+      this.playerSpeedMs = THREE.MathUtils.clamp(
+        this.playerSpeedMs + accelLong * dt,
+        0,
+        CAR_PHYSICS.MAX_SPEED_MS + 0.2,
+      );
+
+      brakeAudioAmt = brake;
+      brakeTailActive = brake > 0.1;
     }
 
-    const driveForce =
-      effectiveThrottle *
-      CAR_PHYSICS.MAX_ENGINE_FORCE_N *
-      torqueCurve *
-      Math.min(2.1, gearMultiplier) *
-      (slipstream ? 1.12 : 1.0);
-    const dragFactor = slipstream ? 0.78 : 1.0;
-    const aeroDrag = 0.5 * CAR_PHYSICS.AIR_DENSITY * CAR_PHYSICS.DRAG_COEFF_AREA * speedMs * speedMs * dragFactor;
-    const rollingDrag = CAR_PHYSICS.MASS_KG * 9.81 * CAR_PHYSICS.ROLLING_RESISTANCE;
-    const slopePitch = Math.atan(getSurfaceSlopeAt(this.playerS, this.playerLaneOffset));
-    const slopeGravity = CAR_PHYSICS.MASS_KG * 9.81 * Math.sin(slopePitch);
+    const forwardMoveM = Math.max(0, this.playerSpeedMs) * dt;
+    this.distanceM += forwardMoveM;
 
-    const downforce = CAR_PHYSICS.DOWNFORCE_COEFF * speedMs * speedMs;
-    const normalForce = CAR_PHYSICS.MASS_KG * 9.81 + downforce;
-    const maxTireForce = normalForce * roadFriction;
-
-    const requestedBrake = brake * CAR_PHYSICS.MAX_BRAKE_FORCE_N;
-    const actualBrake = Math.min(requestedBrake, maxTireForce);
-    const absActive = brake > 0.5 && requestedBrake > maxTireForce * 0.92 && speedKmh > 35;
-
-    const netLongForce = driveForce - aeroDrag - rollingDrag - slopeGravity - actualBrake;
-    const accelLong = netLongForce / CAR_PHYSICS.MASS_KG;
-
-    this.playerSpeedMs = THREE.MathUtils.clamp(
-      this.playerSpeedMs + accelLong * dt,
-      0,
-      CAR_PHYSICS.MAX_SPEED_MS + 0.2,
-    );
-    this.playerS += this.playerSpeedMs * dt;
-    this.distanceM += this.playerSpeedMs * dt;
-
+    const absSpeedMs = Math.abs(this.playerSpeedMs);
     const curKmh = this.playerSpeedMs * 3.6;
+    const curAbsKmh = absSpeedMs * 3.6;
     if (curKmh > this.maxSpeedKmh) this.maxSpeedKmh = curKmh;
 
     if (!this.hit300Triggered && curKmh >= 298.5) {
@@ -1054,117 +1218,213 @@ export class HighwayEngine {
       this.pushSafetyBanner(tip);
     }
 
+    // Zero-speed steering fix: steering wheels rotate visually, but car ONLY moves laterally when rolling!
     this.playerSteer = THREE.MathUtils.damp(this.playerSteer, steerInput, 11, dt);
-    const speedFactor = THREE.MathUtils.clamp(curKmh / 100, 0.25, 3.0);
+    const steerRollAuthority = THREE.MathUtils.clamp(absSpeedMs / 8.5, 0, 1);
+    const speedFactor = THREE.MathUtils.clamp(curAbsKmh / 100, 0.25, 3.0);
     const maxLatSpeed = 11.5 * Math.sqrt(roadFriction);
-    const desiredLatVel = this.playerSteer * maxLatSpeed * (0.75 + 0.25 * Math.min(1.4, speedFactor));
+    const desiredLatVel =
+      this.playerSteer * steerRollAuthority * maxLatSpeed * (0.75 + 0.25 * Math.min(1.4, speedFactor));
 
-    const dsStep = 2.0;
-    const dx1 = roadCenterDX(this.playerS);
-    const dx2 = roadCenterDX(this.playerS + dsStep);
-    const curvature = (dx2 - dx1) / dsStep;
-    const centrifugalPush = curvature * this.playerSpeedMs * this.playerSpeedMs * 0.48;
+    let centrifugalPush = 0;
+    if (!this.jctState) {
+      const dsStep = 2.0;
+      const dx1 = roadCenterDX(this.playerS);
+      const dx2 = roadCenterDX(this.playerS + dsStep);
+      const curvature = (dx2 - dx1) / dsStep;
+      centrifugalPush = curvature * this.playerSpeedMs * absSpeedMs * 0.48;
+    }
 
-    const latGripLambda = 5.5 * roadFriction;
-    this.playerLatVel = THREE.MathUtils.damp(this.playerLatVel, desiredLatVel - centrifugalPush * 0.25, latGripLambda, dt);
-    this.playerLaneOffset += this.playerLatVel * dt;
+    const latGripLambda = absSpeedMs < 0.25 ? 20 : 5.5 * roadFriction;
+    this.playerLatVel = THREE.MathUtils.damp(
+      this.playerLatVel,
+      desiredLatVel - centrifugalPush * 0.25,
+      latGripLambda,
+      dt,
+    );
+    if (absSpeedMs < 0.08 && Math.abs(this.playerLatVel) < 0.05) {
+      this.playerLatVel = 0;
+    }
 
-    const offBounds = getOffMainlineBounds(this.playerS, this.playerLaneOffset);
-    const { leftBound, rightBound, inSaApron, inMergeLane, inIcRamp, activeSa, activeIc, icDs } = offBounds;
+    // Update position either on JCT overpass viaduct or on E1A mainline / SA / PA / IC
+    if (this.jctState) {
+      const jctLen = getJctCurveLength();
+      this.jctState.t += (this.playerSpeedMs * dt) / jctLen;
+      this.jctState.lateralOffset += this.playerLatVel * dt;
 
-    // Announce upcoming NEOPASA SA / PA / IC / JCT early and clearly
-    const nextM = getNextMilestoneAhead(this.playerS);
-    if (nextM.distM < 520 && nextM.milestone.id !== this.lastAnnouncedMilestoneId) {
-      this.lastAnnouncedMilestoneId = nextM.milestone.id;
-      const distRounded = Math.round(nextM.distM / 10) * 10;
-      if (nextM.milestone.type === 'sa') {
-        this.pushSafetyBanner({
-          title: `【あと${distRounded}m】${nextM.milestone.nameJa}（SA入口・左へ）`,
-          body: `${nextM.milestone.featureJa}。左の減速車線から入庫でき、前方の加速車線から本線へ合流できます！`,
-          tone: 'info',
-        });
-      } else if (nextM.milestone.type === 'pa') {
-        this.pushSafetyBanner({
-          title: `【あと${distRounded}m】${nextM.milestone.nameJa}（PA入口・左へ）`,
-          body: `${nextM.milestone.featureJa}。左車線からコンパクトなPA構内に入り休憩できます！`,
-          tone: 'info',
-        });
-      } else if (nextM.milestone.type === 'ic') {
-        this.pushSafetyBanner({
-          title: `【IC出口・ゴール可能】あと${distRounded}m：${nextM.milestone.nameJa}`,
-          body: `左ランプ（4レーン ETC/一般料金所）を通過すると ${nextM.milestone.nameJa} ゴールクリア！本線直進もOK`,
-          tone: 'humor',
-        });
-      } else if (nextM.milestone.type === 'jct') {
-        this.pushSafetyBanner({
-          title: `【JCT分岐案内】この先 ${nextM.milestone.nameJa}`,
-          body: `${nextM.milestone.routeCode}（${nextM.milestone.branchNameJa}）分岐を通過します。本線はそのまま直進！`,
-          tone: 'info',
-        });
+      if (this.jctState.lateralOffset < -2.9) {
+        this.jctState.lateralOffset = -2.9;
+        if (this.playerLatVel < -1.5) {
+          this.audio.playImpact(0.35);
+          this.cameraShake = 0.25;
+        }
+        this.playerLatVel = Math.max(0, -this.playerLatVel * 0.35);
+        this.playerSpeedMs *= 0.985;
+      } else if (this.jctState.lateralOffset > 2.9) {
+        this.jctState.lateralOffset = 2.9;
+        if (this.playerLatVel > 1.5) {
+          this.audio.playImpact(0.35);
+          this.cameraShake = 0.25;
+        }
+        this.playerLatVel = Math.min(0, -this.playerLatVel * 0.35);
+        this.playerSpeedMs *= 0.985;
       }
-    }
 
-    // IC Exit 4-Lane Toll Gate Clear Check (triggers as car passes under toll canopy at ds=+45)
-    if (inIcRamp && activeIc && icDs >= 42 && Math.abs(this.playerS - this.icClearTriggeredForS) > 300) {
-      this.icClearTriggeredForS = this.playerS;
-      this.score += 1500;
-      this.audio.playChime('nearMiss');
-      this.running = false;
-      this.onIcExitClear?.({
-        icName: activeIc.nameJa,
-        branchName: activeIc.branchNameJa,
-        distanceKm: this.distanceM / 1000,
-        maxSpeedKmh: this.maxSpeedKmh,
-        overtakeCount: this.overtakeCount,
-        nearMissCount: this.nearMissCount,
-        score: this.score,
-      });
-    }
-
-    // SA / PA pit-stop / rest bonus & natural merge feedback
-    if (inSaApron && activeSa) {
-      this.wasInSaApron = true;
-      if (this.saRestAwardedId !== activeSa.id && curKmh < 115) {
-        this.saRestAwardedId = activeSa.id;
-        const bonusPts = activeSa.type === 'pa' ? 350 : 500;
-        this.score += bonusPts;
+      if (this.jctState.t < 0) {
+        this.playerS = this.jctState.worldS - 106;
+        this.playerLaneOffset = THREE.MathUtils.clamp(-20.2 + this.jctState.lateralOffset, -24.5, -17.0);
+        this.jctState = null;
+      } else if (
+        this.jctState.t >= 0.89 &&
+        Math.abs(this.jctState.worldS - this.jctClearTriggeredForS) > 300
+      ) {
+        this.jctClearTriggeredForS = this.jctState.worldS;
+        const m = this.jctState.milestone;
+        this.score += 1500;
         this.audio.playChime('nearMiss');
-        this.pushSafetyBanner({
-          title: activeSa.restBonusTitleJa ?? `【${activeSa.nameJa} 入庫】休憩ボーナス +${bonusPts}pts！`,
-          body:
-            activeSa.restBonusBodyJa ??
-            '構内は安全運転ありがとうございます！このまま前方右側の加速車線から本線へ合流できます。',
-          tone: 'humor',
+        this.running = false;
+        this.onIcExitClear?.({
+          kind: 'jct',
+          icName: m.nameJa,
+          branchName: m.branchNameJa,
+          distanceKm: this.distanceM / 1000,
+          maxSpeedKmh: this.maxSpeedKmh,
+          overtakeCount: this.overtakeCount,
+          nearMissCount: this.nearMissCount,
+          score: this.score,
         });
       }
-    } else if (this.wasInSaApron && !inSaApron && !inMergeLane && !activeSa) {
-      this.wasInSaApron = false;
-      this.pushSafetyBanner({
-        title: '【本線合流完了】E1A 新東名 本線へ復帰',
-        body: '加速車線からのスムーズな合流ありがとうございます！本線の120km/hフローに合わせて走行しましょう。',
-        tone: 'info',
-      });
+    } else {
+      this.playerS = Math.max(5, this.playerS + this.playerSpeedMs * dt);
+      this.playerLaneOffset += this.playerLatVel * dt;
+
+      const offBounds = getOffMainlineBounds(this.playerS, this.playerLaneOffset);
+      const {
+        leftBound,
+        rightBound,
+        inSaApron,
+        inMergeLane,
+        inIcRamp,
+        inJctRamp,
+        activeSa,
+        activeIc,
+        activeJct,
+        icDs,
+        jctDs,
+      } = offBounds;
+
+      // Announce upcoming NEOPASA SA / PA / IC / JCT early and clearly
+      const nextM = getNextMilestoneAhead(this.playerS);
+      if (nextM.distM < 520 && nextM.milestone.id !== this.lastAnnouncedMilestoneId) {
+        this.lastAnnouncedMilestoneId = nextM.milestone.id;
+        const distRounded = Math.round(nextM.distM / 10) * 10;
+        if (nextM.milestone.type === 'sa') {
+          this.pushSafetyBanner({
+            title: `【あと${distRounded}m】${nextM.milestone.nameJa}（SA入口・左へ）`,
+            body: `${nextM.milestone.featureJa}。左車線から入庫し、緑の枠 [P] に停車すると駐車ボーナスがもらえます！`,
+            tone: 'info',
+          });
+        } else if (nextM.milestone.type === 'pa') {
+          this.pushSafetyBanner({
+            title: `【あと${distRounded}m】${nextM.milestone.nameJa}（PA入口・左へ）`,
+            body: `${nextM.milestone.featureJa}。左車線からコンパクトなPA構内の緑枠 [P] へ駐車できます！`,
+            tone: 'info',
+          });
+        } else if (nextM.milestone.type === 'ic') {
+          this.pushSafetyBanner({
+            title: `【IC出口・ゴール可能】あと${distRounded}m：${nextM.milestone.nameJa}`,
+            body: `左ランプ（4レーン ETC/一般料金所）を通過すると ${nextM.milestone.nameJa} ゴールクリア！本線直進もOK`,
+            tone: 'humor',
+          });
+        } else if (nextM.milestone.type === 'jct') {
+          this.pushSafetyBanner({
+            title: `【JCT分岐・走行可能】あと${distRounded}m：${nextM.milestone.nameJa}`,
+            body: `左ランプへ進入すると ${nextM.milestone.routeCode}（${nextM.milestone.branchNameJa}）高架橋を走れます！本線直進もOK`,
+            tone: 'info',
+          });
+        }
+      }
+
+      // Seamless entry onto curved elevated JCT viaduct deck
+      if (inJctRamp && activeJct && jctDs >= -105) {
+        const jctWorldS = this.playerS - jctDs;
+        this.jctState = {
+          milestone: activeJct,
+          worldS: jctWorldS,
+          t: Math.max(0, (jctDs + 105) / getJctCurveLength()),
+          lateralOffset: THREE.MathUtils.clamp(this.playerLaneOffset + 20.2, -2.9, 2.9),
+        };
+        this.pushSafetyBanner({
+          title: `【JCTランプ進入】${activeJct.nameJa} 高架連絡路`,
+          body: `${activeJct.branchNameJa} 方面へ接続する高架橋を渡ります！ゲート通過でJCTクリア！`,
+          tone: 'info',
+        });
+      }
+
+      // IC Exit 4-Lane Toll Gate Clear Check (triggers as car passes under toll canopy at ds=+45)
+      if (inIcRamp && activeIc && icDs >= 42 && Math.abs(this.playerS - this.icClearTriggeredForS) > 300) {
+        this.icClearTriggeredForS = this.playerS;
+        this.score += 1500;
+        this.audio.playChime('nearMiss');
+        this.running = false;
+        this.onIcExitClear?.({
+          kind: 'ic',
+          icName: activeIc.nameJa,
+          branchName: activeIc.branchNameJa,
+          distanceKm: this.distanceM / 1000,
+          maxSpeedKmh: this.maxSpeedKmh,
+          overtakeCount: this.overtakeCount,
+          nearMissCount: this.nearMissCount,
+          score: this.score,
+        });
+      }
+
+      // SA / PA pit-stop / rest bonus & natural merge feedback
+      if (inSaApron && activeSa) {
+        this.wasInSaApron = true;
+        if (this.saRestAwardedId !== activeSa.id && curKmh < 115) {
+          this.saRestAwardedId = activeSa.id;
+          const bonusPts = activeSa.type === 'pa' ? 350 : 500;
+          this.score += bonusPts;
+          this.audio.playChime('nearMiss');
+          this.pushSafetyBanner({
+            title: activeSa.restBonusTitleJa ?? `【${activeSa.nameJa} 入庫】休憩ボーナス +${bonusPts}pts！`,
+            body:
+              activeSa.restBonusBodyJa ??
+              '構内左側の緑枠 [P] で停車すると駐車ボーナス(+800pts)！または加速車線から本線へ合流できます。',
+            tone: 'humor',
+          });
+        }
+      } else if (this.wasInSaApron && !inSaApron && !inMergeLane && !activeSa) {
+        this.wasInSaApron = false;
+        this.pushSafetyBanner({
+          title: '【本線合流完了】E1A 新東名 本線へ復帰',
+          body: '加速車線からのスムーズな合流ありがとうございます！本線の120km/hフローに合わせて走行しましょう。',
+          tone: 'info',
+        });
+      }
+
+      if (this.playerLaneOffset < leftBound) {
+        this.playerLaneOffset = leftBound;
+        if (this.playerLatVel < -1.5) {
+          this.audio.playImpact(0.35);
+          this.cameraShake = 0.25;
+        }
+        this.playerLatVel = Math.max(0, -this.playerLatVel * 0.35);
+        this.playerSpeedMs *= 0.985;
+      } else if (this.playerLaneOffset > rightBound) {
+        this.playerLaneOffset = rightBound;
+        if (this.playerLatVel > 1.5) {
+          this.audio.playImpact(0.35);
+          this.cameraShake = 0.25;
+        }
+        this.playerLatVel = Math.min(0, -this.playerLatVel * 0.35);
+        this.playerSpeedMs *= 0.985;
+      }
     }
 
-    if (this.playerLaneOffset < leftBound) {
-      this.playerLaneOffset = leftBound;
-      if (this.playerLatVel < -1.5) {
-        this.audio.playImpact(0.35);
-        this.cameraShake = 0.25;
-      }
-      this.playerLatVel = Math.max(0, -this.playerLatVel * 0.35);
-      this.playerSpeedMs *= 0.985;
-    } else if (this.playerLaneOffset > rightBound) {
-      this.playerLaneOffset = rightBound;
-      if (this.playerLatVel > 1.5) {
-        this.audio.playImpact(0.35);
-        this.cameraShake = 0.25;
-      }
-      this.playerLatVel = Math.min(0, -this.playerLatVel * 0.35);
-      this.playerSpeedMs *= 0.985;
-    }
-
-    const targetRelYaw = -this.playerLatVel * 0.018;
+    const yawReverseSign = this.playerSpeedMs >= -0.05 ? 1 : -1;
+    const targetRelYaw = -this.playerLatVel * 0.018 * yawReverseSign;
     this.playerRelYaw = THREE.MathUtils.damp(this.playerRelYaw, targetRelYaw, 10, dt);
 
     const targetPitch = (accelLong / 9.81) * 0.022;
@@ -1173,15 +1433,21 @@ export class HighwayEngine {
     this.playerRoll = THREE.MathUtils.damp(this.playerRoll, targetRoll, 9, dt);
 
     this.playerCar.tailLightMaterial.emissiveIntensity =
-      brake > 0.1 ? 5.2 : lightsOnIntensity(this.activeWeather, inTunnel);
+      brakeTailActive ? 5.2 : lightsOnIntensity(this.activeWeather, inTunnel);
 
     // Ultra-HD Dynamic Rear Brake PointLight, Glowing Carbon-Ceramic Brake Rotors & Exhaust Shift Flame
     const isUltra = !this.isSoftwareGl && this.qualityMode === QualityMode.Ultra;
     if (this.brakePointLight) {
-      this.brakePointLight.intensity = isUltra && brake > 0.1 ? 6.5 : 0;
+      this.brakePointLight.intensity = isUltra && brakeTailActive ? 6.5 : 0;
     }
-    const targetBrakeGlow = isUltra && brake > 0.25 && curKmh > 80 ? Math.min(2.6, (curKmh - 70) / 80) : 0;
-    this.brakeGlow = THREE.MathUtils.damp(this.brakeGlow, targetBrakeGlow, targetBrakeGlow > this.brakeGlow ? 5 : 2.5, dt);
+    const targetBrakeGlow =
+      isUltra && brakeAudioAmt > 0.25 && curAbsKmh > 80 ? Math.min(2.6, (curAbsKmh - 70) / 80) : 0;
+    this.brakeGlow = THREE.MathUtils.damp(
+      this.brakeGlow,
+      targetBrakeGlow,
+      targetBrakeGlow > this.brakeGlow ? 5 : 2.5,
+      dt,
+    );
     this.playerCar.brakeRotorMat.emissiveIntensity = this.brakeGlow;
 
     if (this.shiftFlameTimer > 0) {
@@ -1213,6 +1479,8 @@ export class HighwayEngine {
       speedKmh: curKmh,
       rpm: this.playerRpm,
       throttle: effectiveThrottle,
+      brake: brakeAudioAmt,
+      isReversing: this.isReversing,
       rainAmount: this.curRainAmount,
       tireSlip,
       inTunnel,
@@ -1222,13 +1490,23 @@ export class HighwayEngine {
   }
 
   private syncPlayerCarTransform(dt: number, steerInput: number): void {
-    const roadX = roadCenterX(this.playerS);
-    const roadY = getSurfaceElevationAt(this.playerS, this.playerLaneOffset);
-    const roadYaw = -Math.atan2(roadCenterDX(this.playerS), 1);
-    const roadPitch = Math.atan(getSurfaceSlopeAt(this.playerS, this.playerLaneOffset));
+    if (this.jctState) {
+      const pose = sampleJctOverpassWorld(
+        this.jctState.worldS,
+        this.jctState.t,
+        this.jctState.lateralOffset,
+      );
+      this.playerCar.root.position.set(pose.x, pose.y, pose.z);
+      this.playerCar.root.rotation.set(pose.pitch, pose.yaw + this.playerRelYaw, 0);
+    } else {
+      const roadX = roadCenterX(this.playerS);
+      const roadY = getSurfaceElevationAt(this.playerS, this.playerLaneOffset);
+      const roadYaw = -Math.atan2(roadCenterDX(this.playerS), 1);
+      const roadPitch = Math.atan(getSurfaceSlopeAt(this.playerS, this.playerLaneOffset));
 
-    this.playerCar.root.position.set(roadX + this.playerLaneOffset, roadY, -this.playerS);
-    this.playerCar.root.rotation.set(roadPitch, roadYaw + this.playerRelYaw, 0);
+      this.playerCar.root.position.set(roadX + this.playerLaneOffset, roadY, -this.playerS);
+      this.playerCar.root.rotation.set(roadPitch, roadYaw + this.playerRelYaw, 0);
+    }
     this.playerCar.bodyPivot.rotation.set(this.playerPitch, 0, this.playerRoll);
 
     this.wheelSpinAngle -= (this.playerSpeedMs / CAR_PHYSICS.WHEEL_RADIUS_M) * dt;
@@ -1368,7 +1646,7 @@ export class HighwayEngine {
         tv.rig.patrolFrontFlashMat.emissiveIntensity = patrolPhase ? 2.8 : 0.3;
       }
 
-      if (this.running) {
+      if (this.running && !this.jctState) {
         const halfLenSum = spec.length * 0.5 + 2.3;
         const halfWidthSum = spec.width * 0.5 + 0.94;
         const dS = tv.s - this.playerS;
@@ -1453,30 +1731,53 @@ export class HighwayEngine {
   }
 
   private updateCamera(dt: number): void {
-    const speedKmh = this.playerSpeedMs * 3.6;
+    const speedKmh = Math.abs(this.playerSpeedMs) * 3.6;
     const speedNorm = THREE.MathUtils.clamp(speedKmh / 300, 0, 1);
+    const aspect = this.camera.aspect || 16 / 9;
+    const isPortrait = aspect < 0.9;
+    const isMobileLandscape = this.deviceMode === 'mobile' && aspect > 1.55;
+    const fovAspectOffset = isPortrait ? 8 : isMobileLandscape ? -4 : 0;
 
     const targetFov =
-      this.cameraMode === CameraMode.Chase
+      (this.cameraMode === CameraMode.Chase
         ? 58 + speedNorm * 11
         : this.cameraMode === CameraMode.Hood
           ? 64 + speedNorm * 12
-          : 66 + speedNorm * 14;
+          : 66 + speedNorm * 14) + fovAspectOffset;
     this.camera.fov = THREE.MathUtils.damp(this.camera.fov, targetFov, 6, dt);
     this.camera.updateProjectionMatrix();
 
-    const roadX = roadCenterX(this.playerS);
-    const roadY = getSurfaceElevationAt(this.playerS, this.playerLaneOffset);
-    const roadYaw = -Math.atan2(roadCenterDX(this.playerS), 1);
-    const carYaw = roadYaw + this.playerRelYaw;
+    let carX = 0;
+    let roadY = 0;
+    let carZ = 0;
+    let carYaw = 0;
+    let carPitch = 0;
+
+    if (this.jctState) {
+      const pose = sampleJctOverpassWorld(
+        this.jctState.worldS,
+        this.jctState.t,
+        this.jctState.lateralOffset,
+      );
+      carX = pose.x;
+      roadY = pose.y;
+      carZ = pose.z;
+      carYaw = pose.yaw + this.playerRelYaw;
+      carPitch = pose.pitch;
+    } else {
+      const roadX = roadCenterX(this.playerS);
+      roadY = getSurfaceElevationAt(this.playerS, this.playerLaneOffset);
+      const roadYaw = -Math.atan2(roadCenterDX(this.playerS), 1);
+      carYaw = roadYaw + this.playerRelYaw;
+      carPitch = Math.atan(getSurfaceSlopeAt(this.playerS, this.playerLaneOffset));
+      carX = roadX + this.playerLaneOffset;
+      carZ = -this.playerS;
+    }
 
     const fwdX = -Math.sin(carYaw);
     const fwdZ = -Math.cos(carYaw);
     const rightX = Math.cos(carYaw);
     const rightZ = -Math.sin(carYaw);
-
-    const carX = roadX + this.playerLaneOffset;
-    const carZ = -this.playerS;
 
     if (this.cameraShake > 0) {
       this.cameraShake = Math.max(0, this.cameraShake - dt * 2.2);
@@ -1502,8 +1803,8 @@ export class HighwayEngine {
         this.camLagY = THREE.MathUtils.damp(this.camLagY, roadY, 12, dt);
       }
 
-      const distBehind = 5.85 + speedNorm * 0.4 + this.camLongOffset;
-      const height = 2.18 + speedNorm * 0.06;
+      const distBehind = (isMobileLandscape ? 5.55 : 5.85) + speedNorm * 0.4 + this.camLongOffset;
+      const height = (isMobileLandscape ? 2.06 : 2.18) + speedNorm * 0.06;
       const latFollow = -this.playerLatVel * 0.05;
       this._desiredCamPos.set(
         this.camLagX - fwdX * distBehind + rightX * latFollow + microVib,
@@ -1512,7 +1813,7 @@ export class HighwayEngine {
       );
       this._desiredCamLook.set(
         THREE.MathUtils.lerp(this.camLagX, carX, 0.7) + fwdX * 22,
-        this.camLagY + 1.08,
+        this.camLagY + 1.08 + Math.sin(carPitch) * 22,
         carZ + fwdZ * 22,
       );
       this.camPos.copy(this._desiredCamPos);
@@ -1528,7 +1829,7 @@ export class HighwayEngine {
       );
       this._desiredCamLook.set(
         carX + fwdX * 26,
-        roadY + 0.45 + hoodPitchBias * 8,
+        roadY + 0.45 + Math.sin(carPitch) * 26 + hoodPitchBias * 8,
         carZ + fwdZ * 26,
       );
       this.camPos.copy(this._desiredCamPos);
@@ -1541,7 +1842,11 @@ export class HighwayEngine {
         roadY + 0.66 + microVib * 0.4,
         carZ + fwdZ * 2.38,
       );
-      this._desiredCamLook.set(carX + fwdX * 36, roadY + 0.62, carZ + fwdZ * 36);
+      this._desiredCamLook.set(
+        carX + fwdX * 36,
+        roadY + 0.62 + Math.sin(carPitch) * 36,
+        carZ + fwdZ * 36,
+      );
       this.camPos.copy(this._desiredCamPos);
       this.camLook.copy(this._desiredCamLook);
       this.camInitialized = true;
@@ -1561,25 +1866,41 @@ export class HighwayEngine {
 
     const speedKmh = this.playerSpeedMs * 3.6;
     const nextM = getNextMilestoneAhead(this.playerS);
-    const offBounds = getOffMainlineBounds(this.playerS, this.playerLaneOffset);
+    const offBounds = this.jctState
+      ? {
+          inSaApron: false,
+          inMergeLane: false,
+          inIcRamp: false,
+          inJctRamp: true,
+          inParkingBay: false,
+          activeSa: null,
+          activeIc: null,
+          activeJct: this.jctState.milestone,
+        }
+      : getOffMainlineBounds(this.playerS, this.playerLaneOffset);
     const kmPost = nextM.milestone.realKmPost - nextM.distM / 1000;
     const activeFacilityKind =
       offBounds.activeSa && (offBounds.inSaApron || offBounds.inMergeLane)
         ? (offBounds.activeSa.type as 'sa' | 'pa')
         : null;
-    const regionName =
-      offBounds.inMergeLane && offBounds.activeSa
-        ? `${offBounds.activeSa.nameJa} 加速・合流車線`
-        : offBounds.inSaApron && offBounds.activeSa
-          ? `${offBounds.activeSa.nameJa} 構内`
-          : offBounds.inIcRamp && offBounds.activeIc
-            ? `${offBounds.activeIc.nameJa} 出口ランプ`
-            : nextM.distM < 220
-              ? `${nextM.milestone.nameJa} 付近`
-              : `次の ${nextM.milestone.nameJa} まで ${(nextM.distM / 1000).toFixed(1)}km`;
+    const regionName = this.jctState
+      ? `${this.jctState.milestone.nameJa}（${this.jctState.milestone.branchNameJa} 高架橋）`
+      : this.isParked && offBounds.activeSa
+        ? `${offBounds.activeSa.nameJa} 駐車中 [P]`
+        : offBounds.inMergeLane && offBounds.activeSa
+          ? `${offBounds.activeSa.nameJa} 加速・合流車線`
+          : offBounds.inSaApron && offBounds.activeSa
+            ? `${offBounds.activeSa.nameJa} 構内`
+            : offBounds.inIcRamp && offBounds.activeIc
+              ? `${offBounds.activeIc.nameJa} 出口ランプ`
+              : offBounds.inJctRamp && offBounds.activeJct
+                ? `${offBounds.activeJct.nameJa} 分岐ランプ`
+                : nextM.distM < 220
+                  ? `${nextM.milestone.nameJa} 付近`
+                  : `次の ${nextM.milestone.nameJa} まで ${(nextM.distM / 1000).toFixed(1)}km`;
 
     const wCfg = WEATHER_CONFIG[this.activeWeather];
-    const inTunnel = isTunnelAt(this.playerS);
+    const inTunnel = !this.jctState && isTunnelAt(this.playerS);
 
     this.onTelemetry({
       speedKmh,
@@ -1601,16 +1922,23 @@ export class HighwayEngine {
       score: this.score,
       kilometerPost: kmPost,
       currentRegionName: regionName,
-      nextMilestoneName: nextM.milestone.nameJa,
-      nextMilestoneType: nextM.milestone.type,
-      nextMilestoneDistM: nextM.distM,
-      nextMilestoneFeature: nextM.milestone.featureJa,
+      nextMilestoneName: this.jctState ? this.jctState.milestone.nameJa : nextM.milestone.nameJa,
+      nextMilestoneType: this.jctState ? 'jct' : nextM.milestone.type,
+      nextMilestoneDistM: this.jctState
+        ? Math.max(0, Math.round((0.89 - this.jctState.t) * getJctCurveLength()))
+        : nextM.distM,
+      nextMilestoneFeature: this.jctState
+        ? this.jctState.milestone.branchNameJa
+        : nextM.milestone.featureJa,
       inSaApron: offBounds.inSaApron,
       activeFacilityKind,
       inMergeLane: offBounds.inMergeLane,
       inIcRamp: offBounds.inIcRamp,
+      inJctRamp: Boolean(this.jctState) || offBounds.inJctRamp,
+      inParkingBay: offBounds.inParkingBay,
+      isParked: this.isParked,
       isSpeedLimited: speedKmh >= CAR_PHYSICS.MAX_SPEED_KMH - 1.5,
-      isBrakingHard: this.input.brake && speedKmh > 60,
+      isBrakingHard: this.input.brake && Math.abs(speedKmh) > 60,
       absActive: phys.absActive,
       headlightsOn: wCfg.headlightsRequired || inTunnel,
       passingFlashActive: this.input.hornOrFlash,
@@ -1621,7 +1949,11 @@ export class HighwayEngine {
     this.disposed = true;
     cancelAnimationFrame(this.frameId);
     clearTimeout(this.frameId);
+    window.clearTimeout(this.resizeFollowupTimer);
     window.removeEventListener('resize', this.handleResize);
+    window.removeEventListener('orientationchange', this.handleOrientationChange);
+    window.visualViewport?.removeEventListener('resize', this.handleResize);
+    this.resizeObserver?.disconnect();
     this.renderer.domElement.removeEventListener('webglcontextlost', this.handleContextLost);
     this.audio.dispose();
     this.world.dispose();

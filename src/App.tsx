@@ -24,9 +24,53 @@ function detectRecommendedDevice(): DeviceMode {
   if (typeof window === 'undefined') return 'pc';
   const coarse = window.matchMedia?.('(pointer: coarse)')?.matches ?? false;
   const touch = 'ontouchstart' in window || (navigator.maxTouchPoints ?? 0) > 0;
-  return (coarse && window.innerWidth < 1100) || (touch && window.innerWidth < 820)
-    ? 'mobile'
-    : 'pc';
+  const minEdge = Math.min(window.innerWidth, window.innerHeight);
+  return (coarse && minEdge < 650) || (touch && minEdge < 560) ? 'mobile' : 'pc';
+}
+
+async function requestAppFullscreen(lockLandscape: boolean): Promise<void> {
+  try {
+    const el = document.documentElement as HTMLElement & {
+      webkitRequestFullscreen?: () => Promise<void> | void;
+    };
+    if (!document.fullscreenElement) {
+      if (el.requestFullscreen) {
+        await el.requestFullscreen({ navigationUI: 'hide' } as FullscreenOptions);
+      } else if (el.webkitRequestFullscreen) {
+        await el.webkitRequestFullscreen();
+      }
+    }
+  } catch {
+    // Ignore iframe / iOS Safari fullscreen restrictions; blazing HUD-free view still activates
+  }
+  if (lockLandscape) {
+    try {
+      const orientation = window.screen?.orientation as ScreenOrientation & {
+        lock?: (type: 'landscape' | 'portrait') => Promise<void>;
+      };
+      await orientation?.lock?.('landscape');
+    } catch {
+      // Orientation lock requires supported fullscreen PWA/Chrome; fail silently on iOS Safari
+    }
+  }
+}
+
+async function releaseAppFullscreen(): Promise<void> {
+  try {
+    const orientation = window.screen?.orientation as ScreenOrientation & {
+      unlock?: () => void;
+    };
+    orientation?.unlock?.();
+  } catch {
+    // Ignore unsupported unlock
+  }
+  try {
+    if (document.fullscreenElement && document.exitFullscreen) {
+      await document.exitFullscreen();
+    }
+  } catch {
+    // Ignore iframe restrictions
+  }
 }
 
 const INITIAL_TELEMETRY: TelemetrySnapshot = {
@@ -62,6 +106,9 @@ const INITIAL_TELEMETRY: TelemetrySnapshot = {
   activeFacilityKind: null,
   inMergeLane: false,
   inIcRamp: false,
+  inJctRamp: false,
+  inParkingBay: false,
+  isParked: false,
 };
 
 export default function App() {
@@ -136,17 +183,12 @@ export default function App() {
   }, []);
 
   const toggleFullscreen = useCallback(async () => {
-    try {
-      if (!document.fullscreenElement) {
-        await document.documentElement.requestFullscreen();
-      } else {
-        await document.exitFullscreen();
-      }
-    } catch {
-      // Fallback gracefully when embedded inside restricted iframe
-      setCinemaHudHidden((prev) => !prev);
+    if (!document.fullscreenElement) {
+      await requestAppFullscreen(deviceMode === 'mobile');
+    } else {
+      await releaseAppFullscreen();
     }
-  }, []);
+  }, [deviceMode]);
 
   const clearInputs = useCallback(() => {
     engineRef.current?.setAnalogSteer(null);
@@ -179,13 +221,7 @@ export default function App() {
         setQualityMode(QualityMode.Ultra);
         engineRef.current?.setQualityMode(QualityMode.Ultra);
         setCinemaHudHidden(true);
-        try {
-          if (!document.fullscreenElement) {
-            await document.documentElement.requestFullscreen();
-          }
-        } catch {
-          // Ignore iframe/iOS fullscreen restrictions; HUD-free cinema mode stays active
-        }
+        await requestAppFullscreen(mode === 'mobile');
       } else {
         setCinemaHudHidden(false);
       }
@@ -213,6 +249,7 @@ export default function App() {
     setIcClearSummary(null);
     setIsModalOpen(false);
     setCinemaHudHidden(false);
+    void releaseAppFullscreen();
     setShowTitle(true);
   }, [clearInputs]);
 
@@ -231,14 +268,22 @@ export default function App() {
     setIsModalOpen(false);
     setHasStartedOnce(true);
     engineRef.current?.setRunning(true);
-    try {
-      if (!document.fullscreenElement) {
-        await document.documentElement.requestFullscreen();
+    await requestAppFullscreen(deviceMode === 'mobile');
+  }, [deviceMode]);
+
+  const handleToggleCinemaHud = useCallback(async () => {
+    if (!cinemaHudHidden) {
+      setQualityMode(QualityMode.Ultra);
+      engineRef.current?.setQualityMode(QualityMode.Ultra);
+      setCinemaHudHidden(true);
+      await requestAppFullscreen(deviceMode === 'mobile');
+    } else {
+      setCinemaHudHidden(false);
+      if (deviceMode === 'mobile') {
+        await releaseAppFullscreen();
       }
-    } catch {
-      // Ignore iframe fullscreen restrictions; Cinema HUD-free mode is active either way
     }
-  }, []);
+  }, [cinemaHudHidden, deviceMode]);
 
   const handlePause = useCallback(() => {
     clearInputs();
@@ -548,7 +593,7 @@ export default function App() {
           dockCollapsed={dockCollapsed}
           onToggleDock={() => setDockCollapsed((v) => !v)}
           onToggleFullscreen={toggleFullscreen}
-          onToggleCinemaHud={() => setCinemaHudHidden((v) => !v)}
+          onToggleCinemaHud={handleToggleCinemaHud}
           onToggleGyro={handleToggleGyro}
           onSelectWeather={handleSelectWeather}
           onSelectCamera={handleSelectCamera}

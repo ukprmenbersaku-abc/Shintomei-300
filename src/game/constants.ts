@@ -17,14 +17,19 @@ export const EXPRESSWAY = {
   MEDIAN_WIDTH: 1.45,
   ONCOMING_CENTER_X: 16.325,
   ONCOMING_LANE_CENTERS: [12.575, 16.325, 20.075] as const,
-  SEGMENT_LENGTH: 10,
-  VISIBLE_SEGMENTS_AHEAD: 80,
-  VISIBLE_SEGMENTS_BEHIND: 12,
+  SEGMENT_LENGTH: 5,
+  VISIBLE_SEGMENTS_AHEAD: 156,
+  VISIBLE_SEGMENTS_BEHIND: 24,
   TUNNEL_INTERVAL_M: 2800,
   TUNNEL_LENGTH_M: 480,
   GANTRY_INTERVAL_M: 450,
   LAMP_INTERVAL_M: 40,
 };
+
+export const PARKING_BAY_COORDS = {
+  sa: { laneOffset: -40.5, ds: 0, halfW: 3.8, halfL: 7.2 },
+  pa: { laneOffset: -28.2, ds: 0, halfW: 3.4, halfL: 7.2 },
+} as const;
 
 export type FacilityStyleId =
   | 'isehara-jct'

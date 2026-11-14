@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import {
   EXPRESSWAY,
   FacilityStyleId,
+  PARKING_BAY_COORDS,
   ROUTE_LOOP_LENGTH_M,
   RouteMilestone,
   SHIN_TOMEI_ROUTE,
@@ -12,6 +13,7 @@ import {
   createHamamatsuSaComplex,
   createIcExitComplex,
   createJctOverpass,
+  createJctRampCurve,
   createKakegawaPaComplex,
   createShimizuPaComplex,
   createShizuokaSaComplex,
@@ -151,64 +153,75 @@ export function getFacilityProfileAt(s: number): FacilityProfile {
     let isPlaza = false;
     let isMergeLane = false;
 
-    if (ds < -250) {
-      // Deceleration taper
-      outerX = THREE.MathUtils.lerp(EDGE, -13.0, smoothstep(-340, -250, ds));
+    if (ds < -245) {
+      // Smooth entry taper into parallel deceleration lane
+      outerX = THREE.MathUtils.lerp(EDGE, -12.4, smoothstep(-340, -245, ds));
+      innerX = THREE.MathUtils.lerp(EDGE, LANE0_LEFT, smoothstep(-340, -322, ds));
+      hasGuide = ds >= -332;
+    } else if (ds < -205) {
+      // Straight parallel deceleration lane
+      outerX = -12.4;
       innerX = LANE0_LEFT;
       hasGuide = true;
     } else if (ds < -165) {
-      // Parallel decel & gore split
-      outerX = THREE.MathUtils.lerp(-13.0, -20.5, smoothstep(-250, -165, ds));
-      innerX = THREE.MathUtils.lerp(LANE0_LEFT, EDGE, smoothstep(-225, -165, ds));
-      hasGuide = ds < -200;
-      if (ds >= -205) {
-        const gt = smoothstep(-205, -165, ds);
-        goreRightX = EDGE;
-        goreLeftX = EDGE - gt * 2.5;
-        innerX = goreLeftX;
-      }
+      // Single continuous curve peeling off across the diverge gore
+      outerX = THREE.MathUtils.lerp(-12.4, -46.0, smoothstep(-205, -80, ds));
+      innerX = THREE.MathUtils.lerp(LANE0_LEFT, EDGE, smoothstep(-208, -190, ds));
+      hasGuide = ds < -198;
+      const gt = smoothstep(-205, -165, ds);
+      goreRightX = EDGE;
+      goreLeftX = EDGE - gt * 2.5;
+      innerX = Math.min(innerX, goreLeftX);
     } else if (ds < -80) {
-      // S-curve off-ramp into SA plaza
-      const t = smoothstep(-165, -80, ds);
-      outerX = THREE.MathUtils.lerp(-20.5, -46.0, t);
-      innerX = THREE.MathUtils.lerp(-10.875, -17.5, t);
+      // Same uninterrupted S-curve into SA plaza (no tangent kink at -165!)
+      outerX = THREE.MathUtils.lerp(-12.4, -46.0, smoothstep(-205, -80, ds));
+      innerX = THREE.MathUtils.lerp(-10.875, -17.5, smoothstep(-165, -80, ds));
       hasIsland = true;
       islandLeftX = innerX;
     } else if (ds <= 80) {
-      // SA parking plaza
+      // Level SA parking plaza
       outerX = -46.0;
       innerX = -17.5;
       hasIsland = true;
       islandLeftX = innerX;
       isPlaza = true;
     } else if (ds <= 185) {
-      // SA exit ramp curving back to merge gore
-      const t = smoothstep(80, 185, ds);
-      outerX = THREE.MathUtils.lerp(-46.0, -15.5, t);
-      innerX = THREE.MathUtils.lerp(-17.5, -10.875, t);
+      // Single uninterrupted exit S-curve back toward merge gore & parallel accel lane
+      outerX = THREE.MathUtils.lerp(-46.0, -12.4, smoothstep(80, 215, ds));
+      innerX = THREE.MathUtils.lerp(-17.5, -10.875, smoothstep(80, 185, ds));
       hasIsland = true;
       islandLeftX = innerX;
-    } else if (ds <= 310) {
-      // Merge gore + parallel acceleration lane
-      outerX = THREE.MathUtils.lerp(-15.5, -12.6, smoothstep(185, 225, ds));
-      innerX = THREE.MathUtils.lerp(EDGE, LANE0_LEFT, smoothstep(195, 235, ds));
-      hasGuide = ds >= 215;
+    } else if (ds <= 215) {
+      // Merge gore wedge narrowing flush to mainline shoulder, outerX finishes same smooth curve
+      outerX = THREE.MathUtils.lerp(-46.0, -12.4, smoothstep(80, 215, ds));
+      const gt = 1 - smoothstep(185, 220, ds);
+      goreRightX = EDGE;
+      goreLeftX = EDGE - gt * 2.5;
+      innerX = THREE.MathUtils.lerp(goreLeftX, LANE0_LEFT, smoothstep(200, 220, ds));
+      hasGuide = ds >= 210;
       isMergeLane = true;
+    } else if (ds <= 300) {
+      // Straight parallel acceleration lane for confident 120km/h merging
+      outerX = -12.4;
+      innerX = LANE0_LEFT;
       if (ds <= 220) {
         const gt = 1 - smoothstep(185, 220, ds);
         goreRightX = EDGE;
         goreLeftX = EDGE - gt * 2.5;
-        innerX = Math.min(innerX, goreLeftX);
+        innerX = THREE.MathUtils.lerp(goreLeftX, LANE0_LEFT, smoothstep(200, 220, ds));
       }
-    } else {
-      // Acceleration lane merge taper back into mainline
-      outerX = THREE.MathUtils.lerp(-12.6, EDGE, smoothstep(310, 380, ds));
-      innerX = LANE0_LEFT;
       hasGuide = true;
+      isMergeLane = true;
+    } else {
+      // Clean acceleration lane merge taper back into mainline
+      outerX = THREE.MathUtils.lerp(-12.4, EDGE, smoothstep(300, 380, ds));
+      innerX = THREE.MathUtils.lerp(LANE0_LEFT, EDGE, smoothstep(358, 380, ds));
+      hasGuide = ds <= 372;
       isMergeLane = true;
     }
 
-    const rampBlend = Math.min(smoothstep(-200, -78, ds), 1 - smoothstep(78, 210, ds));
+    // Climb/descend ONLY inside the separated island span so diverge/merge gores sit flush at mainY!
+    const rampBlend = Math.min(smoothstep(-158, -76, ds), 1 - smoothstep(76, 178, ds));
     const facilityY = THREE.MathUtils.lerp(mainY, plateauBaseY + 2.2, rampBlend);
 
     return {
@@ -243,23 +256,24 @@ export function getFacilityProfileAt(s: number): FacilityProfile {
     let isMergeLane = false;
 
     if (ds < -195) {
-      outerX = THREE.MathUtils.lerp(EDGE, -12.5, smoothstep(-270, -195, ds));
+      outerX = THREE.MathUtils.lerp(EDGE, -12.2, smoothstep(-270, -195, ds));
+      innerX = THREE.MathUtils.lerp(EDGE, LANE0_LEFT, smoothstep(-270, -252, ds));
+      hasGuide = ds >= -262;
+    } else if (ds < -165) {
+      outerX = -12.2;
       innerX = LANE0_LEFT;
       hasGuide = true;
     } else if (ds < -135) {
-      outerX = THREE.MathUtils.lerp(-12.5, -18.0, smoothstep(-195, -135, ds));
-      innerX = THREE.MathUtils.lerp(LANE0_LEFT, EDGE, smoothstep(-175, -135, ds));
-      hasGuide = ds < -165;
-      if (ds >= -168) {
-        const gt = smoothstep(-168, -135, ds);
-        goreRightX = EDGE;
-        goreLeftX = EDGE - gt * 2.2;
-        innerX = goreLeftX;
-      }
+      outerX = THREE.MathUtils.lerp(-12.2, -33.0, smoothstep(-165, -60, ds));
+      innerX = THREE.MathUtils.lerp(LANE0_LEFT, EDGE, smoothstep(-168, -152, ds));
+      hasGuide = ds < -160;
+      const gt = smoothstep(-168, -135, ds);
+      goreRightX = EDGE;
+      goreLeftX = EDGE - gt * 2.2;
+      innerX = Math.min(innerX, goreLeftX);
     } else if (ds < -60) {
-      const t = smoothstep(-135, -60, ds);
-      outerX = THREE.MathUtils.lerp(-18.0, -33.0, t);
-      innerX = THREE.MathUtils.lerp(-10.575, -14.5, t);
+      outerX = THREE.MathUtils.lerp(-12.2, -33.0, smoothstep(-165, -60, ds));
+      innerX = THREE.MathUtils.lerp(-10.575, -14.5, smoothstep(-135, -60, ds));
       hasIsland = true;
       islandLeftX = innerX;
     } else if (ds <= 60) {
@@ -269,30 +283,31 @@ export function getFacilityProfileAt(s: number): FacilityProfile {
       islandLeftX = innerX;
       isPlaza = true;
     } else if (ds <= 145) {
-      const t = smoothstep(60, 145, ds);
-      outerX = THREE.MathUtils.lerp(-33.0, -15.0, t);
-      innerX = THREE.MathUtils.lerp(-14.5, -10.575, t);
+      outerX = THREE.MathUtils.lerp(-33.0, -12.2, smoothstep(60, 175, ds));
+      innerX = THREE.MathUtils.lerp(-14.5, -10.575, smoothstep(60, 145, ds));
       hasIsland = true;
       islandLeftX = innerX;
-    } else if (ds <= 240) {
-      outerX = THREE.MathUtils.lerp(-15.0, -12.4, smoothstep(145, 180, ds));
-      innerX = THREE.MathUtils.lerp(EDGE, LANE0_LEFT, smoothstep(155, 190, ds));
-      hasGuide = ds >= 175;
+    } else if (ds <= 178) {
+      outerX = THREE.MathUtils.lerp(-33.0, -12.2, smoothstep(60, 175, ds));
+      const gt = 1 - smoothstep(145, 178, ds);
+      goreRightX = EDGE;
+      goreLeftX = EDGE - gt * 2.2;
+      innerX = THREE.MathUtils.lerp(goreLeftX, LANE0_LEFT, smoothstep(160, 178, ds));
+      hasGuide = ds >= 170;
       isMergeLane = true;
-      if (ds <= 178) {
-        const gt = 1 - smoothstep(145, 178, ds);
-        goreRightX = EDGE;
-        goreLeftX = EDGE - gt * 2.2;
-        innerX = Math.min(innerX, goreLeftX);
-      }
-    } else {
-      outerX = THREE.MathUtils.lerp(-12.4, EDGE, smoothstep(240, 300, ds));
+    } else if (ds <= 240) {
+      outerX = -12.2;
       innerX = LANE0_LEFT;
       hasGuide = true;
       isMergeLane = true;
+    } else {
+      outerX = THREE.MathUtils.lerp(-12.2, EDGE, smoothstep(240, 300, ds));
+      innerX = THREE.MathUtils.lerp(LANE0_LEFT, EDGE, smoothstep(280, 300, ds));
+      hasGuide = ds <= 292;
+      isMergeLane = true;
     }
 
-    const rampBlend = Math.min(smoothstep(-165, -58, ds), 1 - smoothstep(58, 170, ds));
+    const rampBlend = Math.min(smoothstep(-130, -56, ds), 1 - smoothstep(56, 138, ds));
     const facilityY = THREE.MathUtils.lerp(mainY, plateauBaseY + 1.2, rampBlend);
 
     return {
@@ -326,21 +341,21 @@ export function getFacilityProfileAt(s: number): FacilityProfile {
 
     if (ds < -230) {
       outerX = THREE.MathUtils.lerp(EDGE, -12.8, smoothstep(-320, -230, ds));
-      innerX = LANE0_LEFT;
-      hasGuide = true;
+      innerX = THREE.MathUtils.lerp(EDGE, LANE0_LEFT, smoothstep(-320, -302, ds));
+      hasGuide = ds >= -312;
     } else if (ds < -165) {
-      outerX = THREE.MathUtils.lerp(-12.8, -17.5, smoothstep(-230, -165, ds));
-      innerX = THREE.MathUtils.lerp(LANE0_LEFT, EDGE, smoothstep(-205, -165, ds));
+      outerX = THREE.MathUtils.lerp(-12.8, -46.5, smoothstep(-230, 15, ds) * 0.16);
+      innerX = THREE.MathUtils.lerp(LANE0_LEFT, EDGE, smoothstep(-205, -182, ds));
       hasGuide = ds < -195;
       if (ds >= -200) {
         const gt = smoothstep(-200, -165, ds);
         goreRightX = EDGE;
         goreLeftX = EDGE - gt * 2.5;
-        innerX = goreLeftX;
+        innerX = Math.min(innerX, goreLeftX);
       }
     } else if (ds <= 15) {
       const t = smoothstep(-165, 15, ds);
-      outerX = THREE.MathUtils.lerp(-17.5, -46.5, t);
+      outerX = THREE.MathUtils.lerp(-17.8, -46.5, t);
       innerX = THREE.MathUtils.lerp(-10.875, -24.5, t);
       hasIsland = true;
       islandLeftX = innerX;
@@ -375,7 +390,7 @@ export function getFacilityProfileAt(s: number): FacilityProfile {
     };
   }
 
-  // JCT: left deceleration lane peeling off into elevated JCT viaduct at ds = -150..-80
+  // JCT: left deceleration lane peeling smoothly into elevated JCT viaduct at ds = -150..-80
   if (ds < -300 || ds > -80) return EMPTY_PROFILE;
   let outerX = EDGE;
   let innerX = LANE0_LEFT;
@@ -387,22 +402,22 @@ export function getFacilityProfileAt(s: number): FacilityProfile {
 
   if (ds < -210) {
     outerX = THREE.MathUtils.lerp(EDGE, -12.6, smoothstep(-300, -210, ds));
-    innerX = LANE0_LEFT;
-    hasGuide = true;
+    innerX = THREE.MathUtils.lerp(EDGE, LANE0_LEFT, smoothstep(-300, -282, ds));
+    hasGuide = ds >= -292;
   } else if (ds < -150) {
     outerX = THREE.MathUtils.lerp(-12.6, -16.5, smoothstep(-210, -150, ds));
-    innerX = THREE.MathUtils.lerp(LANE0_LEFT, EDGE, smoothstep(-185, -150, ds));
+    innerX = THREE.MathUtils.lerp(LANE0_LEFT, EDGE, smoothstep(-185, -165, ds));
     hasGuide = ds < -175;
     if (ds >= -182) {
       const gt = smoothstep(-182, -150, ds);
       goreRightX = EDGE;
       goreLeftX = EDGE - gt * 2.2;
-      innerX = goreLeftX;
+      innerX = Math.min(innerX, goreLeftX);
     }
   } else {
     const t = smoothstep(-150, -80, ds);
-    outerX = THREE.MathUtils.lerp(-16.5, -26.0, t);
-    innerX = THREE.MathUtils.lerp(-10.575, -18.0, t);
+    outerX = THREE.MathUtils.lerp(-16.5, -26.2, t);
+    innerX = THREE.MathUtils.lerp(-10.575, -17.8, t);
     hasIsland = true;
     islandLeftX = innerX;
   }
@@ -422,6 +437,63 @@ export function getFacilityProfileAt(s: number): FacilityProfile {
     goreRightX,
     isPlaza: false,
     isMergeLane: false,
+  };
+}
+
+const SHARED_JCT_CURVE = createJctRampCurve();
+const SHARED_JCT_LENGTH = SHARED_JCT_CURVE.getLength();
+const _jctEuler = new THREE.Euler(0, 0, 0, 'XYZ');
+const _jctPos = new THREE.Vector3();
+const _jctTan = new THREE.Vector3();
+const _jctRight = new THREE.Vector3();
+const _jctUp = new THREE.Vector3(0, 1, 0);
+
+export function getJctCurveLength(): number {
+  return SHARED_JCT_LENGTH;
+}
+
+export function sampleJctOverpassWorld(
+  milestoneWorldS: number,
+  t: number,
+  lateralOffset: number,
+): {
+  x: number;
+  y: number;
+  z: number;
+  fwdX: number;
+  fwdY: number;
+  fwdZ: number;
+  yaw: number;
+  pitch: number;
+} {
+  const clampedT = THREE.MathUtils.clamp(t, 0, 1);
+  const localPt = SHARED_JCT_CURVE.getPointAt(clampedT);
+  const localTan = SHARED_JCT_CURVE.getTangentAt(clampedT).normalize();
+  _jctRight.crossVectors(localTan, _jctUp).normalize();
+
+  _jctPos.copy(localPt).addScaledVector(_jctRight, lateralOffset);
+  _jctTan.copy(localTan);
+
+  const mYaw = -Math.atan2(roadCenterDX(milestoneWorldS), 1);
+  const mPitch = Math.atan(roadElevationDY(milestoneWorldS));
+  _jctEuler.set(mPitch, mYaw, 0, 'XYZ');
+
+  _jctPos.applyEuler(_jctEuler);
+  _jctTan.applyEuler(_jctEuler).normalize();
+
+  const mx = roadCenterX(milestoneWorldS);
+  const my = roadElevationY(milestoneWorldS);
+  const mz = -milestoneWorldS;
+
+  return {
+    x: mx + _jctPos.x,
+    y: my + _jctPos.y,
+    z: mz + _jctPos.z,
+    fwdX: _jctTan.x,
+    fwdY: _jctTan.y,
+    fwdZ: _jctTan.z,
+    yaw: Math.atan2(-_jctTan.x, -_jctTan.z),
+    pitch: Math.asin(THREE.MathUtils.clamp(_jctTan.y, -0.95, 0.95)),
   };
 }
 
@@ -458,9 +530,13 @@ export function getOffMainlineBounds(
   inSaApron: boolean;
   inMergeLane: boolean;
   inIcRamp: boolean;
+  inJctRamp: boolean;
+  inParkingBay: boolean;
   activeSa: RouteMilestone | null;
   activeIc: RouteMilestone | null;
+  activeJct: RouteMilestone | null;
   icDs: number;
+  jctDs: number;
 } {
   const prof = getFacilityProfileAt(s);
   const MAIN_LEFT = -7.2;
@@ -473,9 +549,13 @@ export function getOffMainlineBounds(
       inSaApron: false,
       inMergeLane: false,
       inIcRamp: false,
+      inJctRamp: false,
+      inParkingBay: false,
       activeSa: null,
       activeIc: null,
+      activeJct: null,
       icDs: 0,
+      jctDs: 0,
     };
   }
 
@@ -484,20 +564,63 @@ export function getOffMainlineBounds(
   const rampLeftBound = prof.outerX + 1.25;
 
   if (m.type === 'jct') {
-    // Player stays on E1A mainline at JCTs
+    if (prof.hasIsland) {
+      const splitMid = (prof.islandLeftX + prof.islandRightX) * 0.5;
+      if (laneOffset < splitMid) {
+        return {
+          leftBound: rampLeftBound,
+          rightBound: prof.islandLeftX - 1.15,
+          inSaApron: false,
+          inMergeLane: false,
+          inIcRamp: false,
+          inJctRamp: true,
+          inParkingBay: false,
+          activeSa: null,
+          activeIc: null,
+          activeJct: m,
+          icDs: 0,
+          jctDs: ds,
+        };
+      }
+      return {
+        leftBound: MAIN_LEFT,
+        rightBound: MAIN_RIGHT,
+        inSaApron: false,
+        inMergeLane: false,
+        inIcRamp: false,
+        inJctRamp: false,
+        inParkingBay: false,
+        activeSa: null,
+        activeIc: null,
+        activeJct: m,
+        icDs: 0,
+        jctDs: ds,
+      };
+    }
+
     return {
-      leftBound: MAIN_LEFT,
+      leftBound: Math.min(MAIN_LEFT, rampLeftBound),
       rightBound: MAIN_RIGHT,
       inSaApron: false,
       inMergeLane: false,
       inIcRamp: false,
+      inJctRamp: laneOffset < -6.3,
+      inParkingBay: false,
       activeSa: null,
       activeIc: null,
+      activeJct: m,
       icDs: 0,
+      jctDs: ds,
     };
   }
 
   if (m.type === 'sa' || m.type === 'pa') {
+    const bay = PARKING_BAY_COORDS[m.type];
+    const inParkingBay =
+      prof.isPlaza &&
+      Math.abs(ds - bay.ds) <= bay.halfL &&
+      Math.abs(laneOffset - bay.laneOffset) <= bay.halfW;
+
     if (prof.hasIsland) {
       const splitMid = (prof.islandLeftX + prof.islandRightX) * 0.5;
       if (laneOffset < splitMid) {
@@ -507,9 +630,13 @@ export function getOffMainlineBounds(
           inSaApron: true,
           inMergeLane: false,
           inIcRamp: false,
+          inJctRamp: false,
+          inParkingBay,
           activeSa: m,
           activeIc: null,
+          activeJct: null,
           icDs: 0,
+          jctDs: 0,
         };
       }
       return {
@@ -518,13 +645,16 @@ export function getOffMainlineBounds(
         inSaApron: false,
         inMergeLane: false,
         inIcRamp: false,
+        inJctRamp: false,
+        inParkingBay: false,
         activeSa: m,
         activeIc: null,
+        activeJct: null,
         icDs: 0,
+        jctDs: 0,
       };
     }
 
-    // Deceleration or Acceleration Merge Lane (open connection to mainline!)
     const inMerge = prof.isMergeLane && laneOffset < -5.8;
     const inDecel = !prof.isMergeLane && laneOffset < -6.2;
     return {
@@ -533,9 +663,13 @@ export function getOffMainlineBounds(
       inSaApron: inDecel,
       inMergeLane: inMerge,
       inIcRamp: false,
+      inJctRamp: false,
+      inParkingBay: false,
       activeSa: m,
       activeIc: null,
+      activeJct: null,
       icDs: 0,
+      jctDs: 0,
     };
   }
 
@@ -549,9 +683,13 @@ export function getOffMainlineBounds(
         inSaApron: false,
         inMergeLane: false,
         inIcRamp: true,
+        inJctRamp: false,
+        inParkingBay: false,
         activeSa: null,
         activeIc: m,
+        activeJct: null,
         icDs: ds,
+        jctDs: 0,
       };
     }
     return {
@@ -560,9 +698,13 @@ export function getOffMainlineBounds(
       inSaApron: false,
       inMergeLane: false,
       inIcRamp: false,
+      inJctRamp: false,
+      inParkingBay: false,
       activeSa: null,
       activeIc: m,
+      activeJct: null,
       icDs: ds,
+      jctDs: 0,
     };
   }
 
@@ -572,9 +714,13 @@ export function getOffMainlineBounds(
     inSaApron: false,
     inMergeLane: false,
     inIcRamp: laneOffset < -6.8,
+    inJctRamp: false,
+    inParkingBay: false,
     activeSa: null,
     activeIc: m,
+    activeJct: null,
     icDs: ds,
+    jctDs: 0,
   };
 }
 
@@ -998,7 +1144,7 @@ export class HighwayWorld {
     });
     const tunnelSignGeo = new THREE.PlaneGeometry(8.2, 1.54);
 
-    for (let i = 0; i < 30; i++) {
+    for (let i = 0; i < 42; i++) {
       const tGroup = new THREE.Group();
       const arch = new THREE.Mesh(tunnelArchGeo, tunnelWallMat);
       arch.position.set(-0.6, 0.2, 0);
@@ -1046,7 +1192,7 @@ export class HighwayWorld {
         case 'shimada-ic':
           return createIcExitComplex(textures);
         default:
-          return createJctOverpass();
+          return createJctOverpass(textures);
       }
     };
 
@@ -1082,14 +1228,14 @@ export class HighwayWorld {
     }
 
     // 8. Expressway Streetlamps
-    for (let i = 0; i < 23; i++) {
+    for (let i = 0; i < 26; i++) {
       const lamp = createStreetLamp();
       scene.add(lamp.group);
       this.lamps.push(lamp);
     }
 
     // 9. Multi-part Instanced Japanese Cedar/Cypress Trees
-    const treeCount = 190;
+    const treeCount = 260;
     const trunkGeo = new THREE.CylinderGeometry(0.24, 0.38, 3.2, 6);
     trunkGeo.translate(0, 1.6, 0);
     const trunkMat = new THREE.MeshStandardMaterial({ color: 0x4b3626, roughness: 0.95 });
@@ -1608,9 +1754,9 @@ export class HighwayWorld {
         divGoreIdx = placeGore(this.divergeGorePool, divGoreIdx, ms + divergeDs, goreWidthX);
 
         if (m.type === 'sa') {
-          mrgGoreIdx = placeGore(this.mergeGorePool, mrgGoreIdx, ms + 181, -9.625);
+          mrgGoreIdx = placeGore(this.mergeGorePool, mrgGoreIdx, ms + 185, -9.55);
         } else if (m.type === 'pa') {
-          mrgGoreIdx = placeGore(this.mergeGorePool, mrgGoreIdx, ms + 141, -9.475);
+          mrgGoreIdx = placeGore(this.mergeGorePool, mrgGoreIdx, ms + 145, -9.45);
         }
       }
     }
@@ -1629,7 +1775,7 @@ export class HighwayWorld {
       const rightX = 1 / lenXZ;
       const rightZ = dx / lenXZ;
 
-      const vCoord = segIndex * 0.5;
+      const vCoord = segIndex * 0.25;
       const prof = getFacilityProfileAt(s);
 
       // Main & Oncoming Carriageways
@@ -1650,10 +1796,10 @@ export class HighwayWorld {
 
       const rampY = prof.hasRamp ? prof.facilityY : cy;
 
-      // Dynamic Curved Ramp / Decel / Accel Asphalt Ribbon (climbs realistically to SA/PA terrace)
+      // Dynamic Curved Ramp / Decel / Accel Asphalt Ribbon (smoothly covers solid shoulder line during guide zones)
       if (prof.hasRamp) {
         const rampOuterX = prof.outerX;
-        const rampInnerX = Math.min(EDGE + 0.15, prof.innerX);
+        const rampInnerX = prof.innerX;
         rampPos.setXYZ(rIdx, cx + rightX * rampOuterX, rampY + 0.015, z + rightZ * rampOuterX);
         rampPos.setXYZ(rIdx + 1, cx + rightX * rampInnerX, rampY + 0.015, z + rightZ * rampInnerX);
       } else {
@@ -1680,10 +1826,10 @@ export class HighwayWorld {
       plazaUv.setXY(rIdx, 0, vCoord * 0.16);
       plazaUv.setXY(rIdx + 1, 1, vCoord * 0.16);
 
-      // Diverge / Merge Lane Guide Line & Pavement Arrows
+      // Diverge / Merge Lane Dashed Guide Line & Pavement Arrows
       if (prof.hasGuide) {
         const gLeft = Math.min(-7.8, prof.outerX + 0.35);
-        const gRight = -5.5;
+        const gRight = -5.52;
         guidePos.setXYZ(rIdx, cx + rightX * gLeft, cy + 0.03, z + rightZ * gLeft);
         guidePos.setXYZ(rIdx + 1, cx + rightX * gRight, cy + 0.03, z + rightZ * gRight);
       } else {
@@ -1787,25 +1933,43 @@ export class HighwayWorld {
       grRUv.setXY(rIdx, vCoord, 0);
       grRUv.setXY(rIdx + 1, vCoord, 1);
 
-      // Shizuoka Tea-Field Hillsides & Grounded Outer Mountain Skirts (5 columns, outer column locked to -30m ground floor)
+      // Shizuoka Tea-Field Hillsides & Grounded Outer Mountain Skirts (smooth continuous blends — zero wavy snaps!)
       const tIdx = r * 5;
-      const inRampArea = prof.hasRamp && prof.outerX < -10.5;
-      const isSurugaVista = prof.milestone?.styleId === 'suruga-sa' && prof.ds > -185 && prof.ds < 185;
-      const isViaduct = cy > 1.2 && !inRampArea;
-      const hillL = isViaduct ? -10 : inRampArea ? 1.5 : 8.5 + 6.5 * Math.sin(s * 0.011);
-      const hillR = isViaduct ? -10 : 8 + 5.5 * Math.cos(s * 0.009);
-      const farPeakL = isSurugaVista ? -32 : 20 + 14 * Math.sin(s * 0.0045);
+      const rampTerrainW = prof.hasRamp ? smoothstep(-9.0, -14.0, prof.outerX) : 0;
+      const surugaW =
+        prof.milestone?.styleId === 'suruga-sa'
+          ? Math.min(smoothstep(-215, -165, prof.ds), 1 - smoothstep(165, 215, prof.ds))
+          : 0;
+      const viaductWL = smoothstep(0.6, 2.2, cy) * (1 - rampTerrainW);
+      const viaductWR = smoothstep(0.6, 2.2, cy);
+
+      const hillL = THREE.MathUtils.lerp(
+        THREE.MathUtils.lerp(8.5 + 6.5 * Math.sin(s * 0.011), -10, viaductWL),
+        1.5,
+        rampTerrainW,
+      );
+      const hillR = THREE.MathUtils.lerp(8.0 + 5.5 * Math.cos(s * 0.009), -10, viaductWR);
+      const farPeakL = THREE.MathUtils.lerp(20 + 14 * Math.sin(s * 0.0045), -32, surugaW);
       const farPeakR = 19 + 14 * Math.cos(s * 0.0038);
 
       const terLeftEdge = prof.hasRamp ? Math.min(-8.6, prof.outerX - 0.5) : -8.6;
-      const terLeftMid = isSurugaVista ? -69.5 : inRampArea ? Math.min(-42, prof.outerX - 18) : -30;
-      const terLeftMidY = isSurugaVista ? rampY - 0.18 : inRampArea ? rampY - 0.05 : cy + hillL * 0.65;
-      const terLeftOuterY = isSurugaVista ? -32 : cy + hillL * 1.15;
+      const terLeftEdgeY = THREE.MathUtils.lerp(rampY - 0.08, cy - 16, viaductWL);
+      const terLeftMid = THREE.MathUtils.lerp(
+        THREE.MathUtils.lerp(-30, Math.min(-42, prof.outerX - 18), rampTerrainW),
+        -69.5,
+        surugaW,
+      );
+      const terLeftMidY = THREE.MathUtils.lerp(
+        THREE.MathUtils.lerp(cy + hillL * 0.65, rampY - 0.05, rampTerrainW),
+        rampY - 0.18,
+        surugaW,
+      );
+      const terLeftOuterY = THREE.MathUtils.lerp(cy + hillL * 1.15, -32, surugaW);
 
-      terLPos.setXYZ(tIdx, cx + rightX * terLeftEdge, isViaduct ? cy - 16 : rampY - 0.08, z + rightZ * terLeftEdge);
+      terLPos.setXYZ(tIdx, cx + rightX * terLeftEdge, terLeftEdgeY, z + rightZ * terLeftEdge);
       terLPos.setXYZ(tIdx + 1, cx + rightX * terLeftMid, terLeftMidY, z + rightZ * terLeftMid);
       terLPos.setXYZ(tIdx + 2, cx + rightX * -94, terLeftOuterY, z + rightZ * -94);
-      terLPos.setXYZ(tIdx + 3, cx + rightX * -215, isSurugaVista ? -33 : Math.max(-18, cy + farPeakL), z + rightZ * -215);
+      terLPos.setXYZ(tIdx + 3, cx + rightX * -215, THREE.MathUtils.lerp(Math.max(-18, cy + farPeakL), -33, surugaW), z + rightZ * -215);
       terLPos.setXYZ(tIdx + 4, cx + rightX * -450, -32, z + rightZ * -450);
       terLNorm.setXYZ(tIdx, 0, 1, 0);
       terLNorm.setXYZ(tIdx + 1, 0.35, 0.92, 0);
@@ -1818,7 +1982,7 @@ export class HighwayWorld {
       terLUv.setXY(tIdx + 3, 0.75, vCoord * 0.3);
       terLUv.setXY(tIdx + 4, 1, vCoord * 0.3);
 
-      terRPos.setXYZ(tIdx, cx + rightX * 24.3, isViaduct ? cy - 16 : cy - 0.1, z + rightZ * 24.3);
+      terRPos.setXYZ(tIdx, cx + rightX * 24.3, THREE.MathUtils.lerp(cy - 0.1, cy - 16, viaductWR), z + rightZ * 24.3);
       terRPos.setXYZ(tIdx + 1, cx + rightX * 45, cy + hillR * 0.6, z + rightZ * 45);
       terRPos.setXYZ(tIdx + 2, cx + rightX * 96, cy + hillR * 1.1, z + rightZ * 96);
       terRPos.setXYZ(tIdx + 3, cx + rightX * 220, Math.max(-18, cy + farPeakR), z + rightZ * 220);
@@ -1834,7 +1998,7 @@ export class HighwayWorld {
       terRUv.setXY(tIdx + 3, 0.75, vCoord * 0.3);
       terRUv.setXY(tIdx + 4, 1, vCoord * 0.3);
 
-      // Segment-level props (10m step, 20m/40m props on even/mod4 indices)
+      // Segment-level props (5m ribbon step -> 10m/20m/40m props aligned via segIndex modulo)
       if (r < TOTAL_SEGMENTS) {
         const midS = s + EXPRESSWAY.SEGMENT_LENGTH * 0.5;
         const midX = roadCenterX(midS);
@@ -1844,38 +2008,42 @@ export class HighwayWorld {
         const midProf = getFacilityProfileAt(midS);
         const midInRamp = midProf.hasRamp && midProf.outerX < -9.2;
 
-        // Cat's eyes (every 10m)
-        for (const divX of [-1.875, 1.875]) {
-          if (catsIdx < this.catsEyeMesh.count) {
-            this._dummy.position.set(cx + rightX * divX, cy + 0.02, z + rightZ * divX);
-            this._dummy.rotation.set(0, yaw, 0);
-            this._dummy.scale.set(1, 1, 1);
-            this._dummy.updateMatrix();
-            this.catsEyeMesh.setMatrixAt(catsIdx++, this._dummy.matrix);
+        // Cat's eyes (every 10m = even segIndex)
+        if (segIndex % 2 === 0) {
+          for (const divX of [-1.875, 1.875]) {
+            if (catsIdx < this.catsEyeMesh.count) {
+              this._dummy.position.set(cx + rightX * divX, cy + 0.02, z + rightZ * divX);
+              this._dummy.rotation.set(0, yaw, 0);
+              this._dummy.scale.set(1, 1, 1);
+              this._dummy.updateMatrix();
+              this.catsEyeMesh.setMatrixAt(catsIdx++, this._dummy.matrix);
+            }
           }
         }
 
-        // Reflective shoulder delineator posts (hugs curved ramps & SA terrace on left!)
-        if (!prof.isPlaza && delIdx < this.delineatorMesh.count) {
-          const delLeftX = prof.hasRamp ? prof.outerX - 0.18 : -8.5;
-          this._dummy.position.set(cx + rightX * delLeftX, rampY, z + rightZ * delLeftX);
-          this._dummy.rotation.set(0, yaw, 0);
-          this._dummy.scale.set(1, 1, 1);
-          this._dummy.updateMatrix();
-          this.delineatorMesh.setMatrixAt(delIdx++, this._dummy.matrix);
-        }
-        if (delIdx < this.delineatorMesh.count) {
-          this._dummy.position.set(cx + rightX * 24.2, cy, z + rightZ * 24.2);
-          this._dummy.rotation.set(0, yaw, 0);
-          this._dummy.scale.set(1, 1, 1);
-          this._dummy.updateMatrix();
-          this.delineatorMesh.setMatrixAt(delIdx++, this._dummy.matrix);
+        // Reflective shoulder delineator posts (every 10m, hugs curved ramps & SA terrace on left!)
+        if (segIndex % 2 === 0) {
+          if (!prof.isPlaza && delIdx < this.delineatorMesh.count) {
+            const delLeftX = prof.hasRamp ? prof.outerX - 0.18 : -8.5;
+            this._dummy.position.set(cx + rightX * delLeftX, rampY, z + rightZ * delLeftX);
+            this._dummy.rotation.set(0, yaw, 0);
+            this._dummy.scale.set(1, 1, 1);
+            this._dummy.updateMatrix();
+            this.delineatorMesh.setMatrixAt(delIdx++, this._dummy.matrix);
+          }
+          if (delIdx < this.delineatorMesh.count) {
+            this._dummy.position.set(cx + rightX * 24.2, cy, z + rightZ * 24.2);
+            this._dummy.rotation.set(0, yaw, 0);
+            this._dummy.scale.set(1, 1, 1);
+            this._dummy.updateMatrix();
+            this.delineatorMesh.setMatrixAt(delIdx++, this._dummy.matrix);
+          }
         }
 
-        // Median anti-glare paddles (every 3.33m)
-        for (let p = 0; p < 3; p++) {
+        // Median anti-glare paddles (every 2.5m)
+        for (let p = 0; p < 2; p++) {
           if (paddleIdx < this.glarePaddleMesh.count) {
-            const ps = s + p * 3.33;
+            const ps = s + p * 2.5;
             this._dummy.position.set(roadCenterX(ps) + EXPRESSWAY.MEDIAN_X, roadElevationY(ps) + 1.35, -ps);
             this._dummy.rotation.set(0, -Math.atan2(roadCenterDX(ps), 1), 0);
             this._dummy.scale.set(1, 1, 1);
@@ -1884,8 +2052,8 @@ export class HighwayWorld {
           }
         }
 
-        // 20m-aligned props (Sound Barriers & Tunnel Arches)
-        if (segIndex % 2 === 0) {
+        // 20m-aligned props (Sound Barriers & Tunnel Arches: every 4 * 5m = 20m)
+        if (segIndex % 4 === 0) {
           const midS20 = s + 10;
           const midX20 = roadCenterX(midS20);
           const midY20 = roadElevationY(midS20);
@@ -1915,8 +2083,8 @@ export class HighwayWorld {
           }
         }
 
-        // Viaduct bridge piers (every 40m)
-        if (midY > 1.2 && !midInRamp && segIndex % 4 === 0 && pierIdx < this.viaductPierMesh.count) {
+        // Viaduct bridge piers (every 40m = 8 * 5m)
+        if (midY > 1.2 && !midInRamp && segIndex % 8 === 0 && pierIdx < this.viaductPierMesh.count) {
           this._dummy.position.set(midX + 7.85, midY - 0.5, -midS);
           this._dummy.rotation.set(0, yaw, 0);
           this._dummy.scale.set(1, 1, 1);
@@ -1924,8 +2092,8 @@ export class HighwayWorld {
           this.viaductPierMesh.setMatrixAt(pierIdx++, this._dummy.matrix);
         }
 
-        // Emergency Telephones (skip inside SA/PA/IC ramps & tunnels)
-        if (!inTunnel && !midInRamp && segIndex % 16 === 0 && emergIdx < this.emergencyBoxMesh.count) {
+        // Emergency Telephones (every 160m = 32 * 5m)
+        if (!inTunnel && !midInRamp && segIndex % 32 === 0 && emergIdx < this.emergencyBoxMesh.count) {
           this._dummy.position.set(midX - 8.3, midY, -midS);
           this._dummy.rotation.set(0, yaw, 0);
           this._dummy.scale.set(1, 1, 1);
@@ -1933,9 +2101,9 @@ export class HighwayWorld {
           this.emergencyBoxMesh.setMatrixAt(emergIdx++, this._dummy.matrix);
         }
 
-        // Transmission Pylon Towers (every 80m)
-        if (!inTunnel && segIndex % 8 === 0 && pylonIdx < this.pylonMesh.count) {
-          const side = segIndex % 16 === 0 ? -1 : 1;
+        // Transmission Pylon Towers (every 80m = 16 * 5m)
+        if (!inTunnel && segIndex % 16 === 0 && pylonIdx < this.pylonMesh.count) {
+          const side = segIndex % 32 === 0 ? -1 : 1;
           this._dummy.position.set(midX + (side < 0 ? -74 : 84), midY + 9, -midS);
           this._dummy.rotation.set(0, (segIndex * 0.4) % Math.PI, 0);
           this._dummy.scale.set(1, 1, 1);
@@ -1943,8 +2111,8 @@ export class HighwayWorld {
           this.pylonMesh.setMatrixAt(pylonIdx++, this._dummy.matrix);
         }
 
-        // Multi-part Roadside Cedar/Cypress Trees (every 20m, kept clear of SA/PA/IC/JCT & tunnels!)
-        if (!inTunnel && !isViaduct && segIndex % 2 === 0 && treeIdx + 4 <= this.treeTrunkMesh.count) {
+        // Multi-part Roadside Cedar/Cypress Trees (every 20m = 4 * 5m, kept clear of SA/PA/IC/JCT & tunnels!)
+        if (!inTunnel && viaductWR < 0.5 && segIndex % 4 === 0 && treeIdx + 4 <= this.treeTrunkMesh.count) {
           const hash = Math.abs(Math.sin(segIndex * 12.9898) * 43758.5453);
           const frac1 = hash - Math.floor(hash);
           const frac2 = (hash * 3.7) % 1;
@@ -2065,10 +2233,10 @@ export class HighwayWorld {
     this.catsEyeMesh.instanceMatrix.needsUpdate = true;
     this.glarePaddleMesh.instanceMatrix.needsUpdate = true;
 
-    // Streetlamps at 40m intervals (4 * 10m segments)
-    const firstLampSeg = Math.ceil(startSeg / 4) * 4;
+    // Streetlamps at 40m intervals (8 * 5m segments)
+    const firstLampSeg = Math.ceil(startSeg / 8) * 8;
     for (let i = 0; i < this.lamps.length; i++) {
-      const lampS = (firstLampSeg + i * 4) * EXPRESSWAY.SEGMENT_LENGTH;
+      const lampS = (firstLampSeg + i * 8) * EXPRESSWAY.SEGMENT_LENGTH;
       const lamp = this.lamps[i];
       if (isTunnelAt(lampS)) {
         lamp.group.visible = false;

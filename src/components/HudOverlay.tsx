@@ -18,7 +18,9 @@ import {
   ChevronDown,
   ChevronUp,
   Compass,
+  Eye,
   EyeOff,
+  Flame,
   Info,
   Maximize2,
   Minimize2,
@@ -94,15 +96,19 @@ export const HudOverlay: React.FC<HudOverlayProps> = ({
   const [showMobileControls, setShowMobileControls] = useState(false);
 
   const weatherCfg = WEATHER_CONFIG[telemetry.activeWeather];
-  const speedRounded = Math.round(telemetry.speedKmh);
+  const speedRounded = Math.abs(Math.round(telemetry.speedKmh));
+  const gearDisplay = telemetry.isParked
+    ? 'P'
+    : telemetry.gear === -1
+      ? 'R'
+      : telemetry.gear === 0
+        ? 'P'
+        : String(telemetry.gear);
+  const gearBadgeLabel = gearDisplay === 'P' || gearDisplay === 'R' ? gearDisplay : `G${gearDisplay}`;
+  const isReverse = telemetry.gear === -1;
   const rpmPct = Math.min(100, Math.max(0, ((telemetry.rpm - 1000) / 7400) * 100));
-  const speedPct = Math.min(100, (telemetry.speedKmh / 300) * 100);
+  const speedPct = Math.min(100, (Math.abs(telemetry.speedKmh) / 300) * 100);
   const gripPct = Math.round(telemetry.gripLevel * 100);
-
-  // Pure Fullscreen Ultra-HD / HUD-Free Mode: hide ALL extra displays cleanly
-  if (cinemaHudHidden && isRunning) {
-    return null;
-  }
 
   const isMobile = deviceMode === 'mobile';
   const nextCameraMode = () => {
@@ -110,28 +116,225 @@ export const HudOverlay: React.FC<HudOverlayProps> = ({
     return order[(order.indexOf(cameraMode) + 1) % order.length];
   };
 
+  // Fullscreen Blazing / HUD-Free Mode
+  if (cinemaHudHidden && isRunning) {
+    if (!isMobile) {
+      return (
+        <div className="fixed top-3 right-3 z-20 pointer-events-auto flex items-center gap-1.5 opacity-30 hover:opacity-100 focus-within:opacity-100 transition-opacity">
+          <button
+            type="button"
+            onClick={onToggleCinemaHud}
+            title="HUDを再表示 (U)"
+            className="px-2.5 py-1.5 rounded-lg bg-[#090f1a]/85 border border-slate-700/80 text-slate-200 text-xs font-medium flex items-center gap-1"
+          >
+            <Eye className="w-3.5 h-3.5" />
+            <span>HUD</span>
+          </button>
+          <button
+            type="button"
+            onClick={onPause}
+            title="メニュー (Esc)"
+            className="p-1.5 rounded-lg bg-[#090f1a]/85 border border-slate-700/80 text-slate-200"
+          >
+            <Pause className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      );
+    }
+
+    // Mobile Fullscreen Blazing Mode: ultra-clean highway view + phantom corner touch controls
+    const showBlazingExitHint =
+      telemetry.inSaApron ||
+      telemetry.inMergeLane ||
+      telemetry.inIcRamp ||
+      telemetry.inJctRamp ||
+      telemetry.isParked ||
+      telemetry.inParkingBay ||
+      telemetry.nextMilestoneDistM < 420;
+
+    return (
+      <div className="fixed inset-0 z-10 pointer-events-none flex flex-col justify-between p-2 pt-safe pb-safe px-safe">
+        {/* Blazing Top Bar: only emergency SA/IC/JCT micro-hint on left + compact speed & exit pill on right */}
+        <div className="flex items-start justify-between gap-2">
+          <div>
+            {showBlazingExitHint && (
+              <div className="rounded-full bg-[#090f1a]/72 border border-amber-400/70 px-3 py-1 text-[11px] font-bold text-amber-200 shadow-lg backdrop-blur-[2px] tabular-nums">
+                {telemetry.isParked
+                  ? '駐車完了 [P] · 加速/減速長押し(R)で発進'
+                  : telemetry.inParkingBay
+                    ? '緑枠内！停車で駐車 (+800pts)'
+                    : telemetry.inJctRamp
+                      ? `${telemetry.nextMilestoneName} 高架ランプ走行中`
+                      : telemetry.inMergeLane
+                        ? `${telemetry.nextMilestoneName} 合流 ↗`
+                        : telemetry.inSaApron
+                          ? `${telemetry.nextMilestoneName} 構内（緑枠[P]で駐車可）`
+                          : telemetry.inIcRamp
+                            ? `${telemetry.nextMilestoneName} 出口へ`
+                            : telemetry.nextMilestoneType === 'jct'
+                              ? `↙ ${Math.max(10, Math.round(telemetry.nextMilestoneDistM / 10) * 10)}m ${telemetry.nextMilestoneName} 分岐`
+                              : `↙ ${Math.max(10, Math.round(telemetry.nextMilestoneDistM / 10) * 10)}m ${telemetry.nextMilestoneName}`}
+              </div>
+            )}
+          </div>
+
+          <div className="pointer-events-auto flex items-center gap-1.5 rounded-full bg-[#070b12]/60 border border-white/15 px-2.5 py-1 backdrop-blur-sm shadow-lg">
+            <span
+              className={`font-display-telemetry font-bold text-sm leading-none tabular-nums ${
+                isReverse
+                  ? 'text-rose-400'
+                  : telemetry.isSpeedLimited
+                    ? 'text-amber-400'
+                    : speedRounded >= 240
+                      ? 'text-sky-300'
+                      : 'text-white'
+              }`}
+            >
+              {speedRounded}
+            </span>
+            <span className="text-[10px] text-slate-300">km/h</span>
+            <span className="text-slate-500 text-xs">·</span>
+            <span
+              className={`font-display-telemetry font-bold text-xs ${
+                telemetry.isParked ? 'text-emerald-400' : isReverse ? 'text-rose-400' : 'text-amber-400'
+              }`}
+            >
+              {gearBadgeLabel}
+            </span>
+
+            <button
+              type="button"
+              onClick={() => onSelectCamera(nextCameraMode())}
+              aria-label="視点切替"
+              className="ml-1 w-8 h-8 rounded-full bg-white/10 active:bg-sky-500 text-white flex items-center justify-center"
+            >
+              <Camera className="w-3.5 h-3.5" />
+            </button>
+            <button
+              type="button"
+              onClick={onToggleCinemaHud}
+              aria-label="爆走モード終了"
+              className="h-8 px-2.5 rounded-full bg-white/10 active:bg-slate-600 text-slate-100 text-[11px] font-semibold flex items-center gap-1 whitespace-nowrap"
+            >
+              <Eye className="w-3.5 h-3.5" />
+              <span>通常</span>
+            </button>
+            <button
+              type="button"
+              onClick={onPause}
+              aria-label="メニュー"
+              className="w-8 h-8 rounded-full bg-white/10 active:bg-slate-600 text-slate-100 flex items-center justify-center"
+            >
+              <Pause className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+
+        {/* Blazing Bottom Phantom Corner Controls */}
+        <div className="flex items-end justify-between gap-2 pb-0.5">
+          <div
+            className={`pointer-events-auto flex items-center gap-2 touch-none select-none ${
+              gyroEnabled ? 'opacity-45' : 'opacity-85'
+            }`}
+          >
+            <button
+              type="button"
+              onPointerDown={(e) => {
+                e.currentTarget.setPointerCapture?.(e.pointerId);
+                onTouchInput({ left: true });
+              }}
+              onPointerUp={() => onTouchInput({ left: false })}
+              onPointerCancel={() => onTouchInput({ left: false })}
+              aria-label="左へステア"
+              className="w-15 h-14 sm:w-16 sm:h-14 portrait:w-16 portrait:h-16 rounded-2xl bg-[#070b12]/35 border border-white/25 backdrop-blur-[2px] active:bg-amber-500 active:text-slate-950 active:border-amber-300 text-white font-bold text-xl shadow-lg touch-none select-none flex items-center justify-center"
+            >
+              ←
+            </button>
+            <button
+              type="button"
+              onPointerDown={(e) => {
+                e.currentTarget.setPointerCapture?.(e.pointerId);
+                onTouchInput({ right: true });
+              }}
+              onPointerUp={() => onTouchInput({ right: false })}
+              onPointerCancel={() => onTouchInput({ right: false })}
+              aria-label="右へステア"
+              className="w-15 h-14 sm:w-16 sm:h-14 portrait:w-16 portrait:h-16 rounded-2xl bg-[#070b12]/35 border border-white/25 backdrop-blur-[2px] active:bg-amber-500 active:text-slate-950 active:border-amber-300 text-white font-bold text-xl shadow-lg touch-none select-none flex items-center justify-center"
+            >
+              →
+            </button>
+          </div>
+
+          <div className="pointer-events-auto flex items-end gap-2 touch-none select-none opacity-85">
+            <button
+              type="button"
+              onPointerDown={(e) => {
+                e.currentTarget.setPointerCapture?.(e.pointerId);
+                onTouchInput({ hornOrFlash: true });
+              }}
+              onPointerUp={() => onTouchInput({ hornOrFlash: false })}
+              onPointerCancel={() => onTouchInput({ hornOrFlash: false })}
+              aria-label="パッシング"
+              className="w-10 h-12 rounded-xl bg-sky-950/35 border border-sky-300/35 backdrop-blur-[2px] active:bg-sky-400 active:text-slate-950 text-sky-100 flex items-center justify-center touch-none select-none shadow-lg"
+            >
+              <Zap className="w-4 h-4" />
+            </button>
+            <button
+              type="button"
+              onPointerDown={(e) => {
+                e.currentTarget.setPointerCapture?.(e.pointerId);
+                onTouchInput({ brake: true });
+              }}
+              onPointerUp={() => onTouchInput({ brake: false })}
+              onPointerCancel={() => onTouchInput({ brake: false })}
+              className="w-14 h-13 portrait:w-16 portrait:h-16 rounded-2xl bg-red-950/35 border border-red-400/45 backdrop-blur-[2px] active:bg-red-500 active:text-white text-red-100 text-[11px] font-extrabold touch-none select-none shadow-lg flex items-center justify-center"
+            >
+              {isReverse || speedRounded <= 2 ? '減速/R' : '減速'}
+            </button>
+            <button
+              type="button"
+              onPointerDown={(e) => {
+                e.currentTarget.setPointerCapture?.(e.pointerId);
+                onTouchInput({ throttle: true });
+              }}
+              onPointerUp={() => onTouchInput({ throttle: false })}
+              onPointerCancel={() => onTouchInput({ throttle: false })}
+              className="w-18 h-16 portrait:w-20 portrait:h-22 rounded-2xl bg-emerald-950/40 border border-emerald-400/55 backdrop-blur-[2px] active:bg-emerald-400 active:text-slate-950 text-emerald-50 text-sm font-extrabold touch-none select-none shadow-lg flex items-center justify-center"
+            >
+              加速
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="fixed inset-0 z-10 pointer-events-none flex flex-col justify-between p-2.5 sm:p-5 pt-safe pb-safe px-safe">
+    <div className="fixed inset-0 z-10 pointer-events-none flex flex-col justify-between p-2 sm:p-5 [@media(max-height:540px)]:p-1.5 pt-safe pb-safe px-safe">
       {/* TOP BAR ROW */}
       <div className="flex items-start justify-between gap-2 sm:gap-4">
         {/* Top-Left: Shin-Tomei Route Sign + Approaching SA/IC Turnoff Guidance */}
-        <div className="flex flex-col gap-2 min-w-0">
-          <div className="pointer-events-auto flex items-center gap-2.5 sm:gap-3 bg-[#090f1a]/90 border border-slate-700/80 rounded-xl px-2.5 py-2 sm:px-3.5 sm:py-2.5 shadow-lg">
-            <div className="w-11 h-11 rounded-full bg-white border-[3.5px] border-[#d91c2b] flex flex-col items-center justify-center shrink-0">
-              <span className="font-display-telemetry font-bold text-sm leading-none text-slate-900">
+        <div className="flex flex-col gap-1.5 sm:gap-2 min-w-0">
+          <div className="pointer-events-auto flex items-center gap-2 sm:gap-3 bg-[#090f1a]/90 border border-slate-700/80 rounded-xl px-2.5 py-1.5 sm:px-3.5 sm:py-2.5 [@media(max-height:540px)]:px-2 [@media(max-height:540px)]:py-1 shadow-lg">
+            <div className="w-10 h-10 sm:w-11 sm:h-11 [@media(max-height:540px)]:w-8 [@media(max-height:540px)]:h-8 rounded-full bg-white border-[3px] sm:border-[3.5px] border-[#d91c2b] flex flex-col items-center justify-center shrink-0">
+              <span className="font-display-telemetry font-bold text-xs sm:text-sm [@media(max-height:540px)]:text-[11px] leading-none text-slate-900">
                 300
               </span>
-              <span className="text-[7px] font-bold text-slate-600 leading-none">km/h</span>
+              <span className="text-[7px] font-bold text-slate-600 leading-none [@media(max-height:540px)]:hidden">
+                km/h
+              </span>
             </div>
 
             <div className="min-w-0">
-              <div className="flex items-center gap-2 text-xs text-emerald-300 font-semibold">
-                <span className="px-1.5 py-0.5 rounded bg-[#006b3f] text-white font-display-telemetry text-[11px] border border-emerald-300/40">
+              <div className="flex items-center gap-1.5 sm:gap-2 text-[11px] sm:text-xs text-emerald-300 font-semibold">
+                <span className="px-1.5 py-0.5 rounded bg-[#006b3f] text-white font-display-telemetry text-[10px] sm:text-[11px] border border-emerald-300/40 shrink-0">
                   E1A
                 </span>
-                <span className="truncate max-w-[200px] sm:max-w-none">{telemetry.currentRegionName}</span>
+                <span className="truncate max-w-[165px] sm:max-w-[230px] md:max-w-none">
+                  {telemetry.currentRegionName}
+                </span>
               </div>
-              <div className="flex items-center gap-2 text-xs text-slate-300 mt-1 tabular-nums">
+              <div className="flex items-center gap-1.5 sm:gap-2 text-[10px] sm:text-xs text-slate-300 mt-0.5 sm:mt-1 tabular-nums">
                 <span>{weatherCfg.labelJa}</span>
                 <span aria-hidden="true" className="text-slate-500">·</span>
                 <span>KP {telemetry.kilometerPost.toFixed(1)}</span>
@@ -145,50 +348,73 @@ export const HudOverlay: React.FC<HudOverlayProps> = ({
             </div>
           </div>
 
-          {/* High-Visibility Approaching SA / PA / IC / Merge Turnoff Navigation Card */}
+          {/* High-Visibility Approaching SA / PA / IC / JCT / Parking Navigation Card */}
           {isRunning &&
             (telemetry.inSaApron ||
               telemetry.inMergeLane ||
               telemetry.inIcRamp ||
-              (telemetry.nextMilestoneDistM < 650 && telemetry.nextMilestoneType !== 'jct')) && (
+              telemetry.inJctRamp ||
+              telemetry.isParked ||
+              telemetry.inParkingBay ||
+              telemetry.nextMilestoneDistM < 650) && (
               <div
-                className={`rounded-xl px-3.5 py-2.5 border-2 shadow-xl max-w-xs tabular-nums ${
-                  telemetry.inMergeLane
-                    ? 'bg-[#211805]/95 border-amber-400 text-white'
-                    : telemetry.inIcRamp || telemetry.nextMilestoneType === 'ic'
-                      ? 'bg-[#062e1e]/95 border-amber-400 text-white'
-                      : telemetry.activeFacilityKind === 'pa' || telemetry.nextMilestoneType === 'pa'
-                        ? 'bg-[#06292e]/95 border-teal-400 text-white'
-                        : 'bg-[#08243d]/95 border-sky-400 text-white'
+                className={`rounded-xl px-3 py-2 [@media(max-height:540px)]:px-2.5 [@media(max-height:540px)]:py-1 border-2 shadow-xl max-w-xs [@media(max-height:540px)]:max-w-[260px] tabular-nums ${
+                  telemetry.isParked || telemetry.inParkingBay
+                    ? 'bg-[#05291c]/95 border-emerald-400 text-white'
+                    : telemetry.inMergeLane
+                      ? 'bg-[#211805]/95 border-amber-400 text-white'
+                      : telemetry.inJctRamp || telemetry.nextMilestoneType === 'jct'
+                        ? 'bg-[#072636]/95 border-cyan-400 text-white'
+                        : telemetry.inIcRamp || telemetry.nextMilestoneType === 'ic'
+                          ? 'bg-[#062e1e]/95 border-amber-400 text-white'
+                          : telemetry.activeFacilityKind === 'pa' || telemetry.nextMilestoneType === 'pa'
+                            ? 'bg-[#06292e]/95 border-teal-400 text-white'
+                            : 'bg-[#08243d]/95 border-sky-400 text-white'
                 }`}
               >
-                <div className="text-[11px] font-bold tracking-wide text-amber-300">
-                  {telemetry.inMergeLane
-                    ? '加速車線走行中（十分に加速して右の本線へ合流 ↗）'
-                    : telemetry.inSaApron
-                      ? `${telemetry.activeFacilityKind === 'pa' ? 'PA' : 'SA'} 構内走行中（前方の加速車線から本線合流）`
-                      : telemetry.inIcRamp
-                        ? 'IC 出口ランプ進入中（4レーン料金所通過でゴール！）'
-                        : telemetry.nextMilestoneType === 'ic'
-                          ? `↙ あと ${Math.max(10, Math.round(telemetry.nextMilestoneDistM / 10) * 10)}m で IC出口（ゴール可）`
-                          : telemetry.nextMilestoneType === 'pa'
-                            ? `↙ あと ${Math.max(10, Math.round(telemetry.nextMilestoneDistM / 10) * 10)}m で PA入口`
-                            : `↙ あと ${Math.max(10, Math.round(telemetry.nextMilestoneDistM / 10) * 10)}m で SA入口`}
+                <div className="text-[10px] sm:text-[11px] font-bold tracking-wide text-amber-300">
+                  {telemetry.isParked
+                    ? '駐車完了 [P]（アクセルで前進 · 減速長押しでバックR）'
+                    : telemetry.inParkingBay
+                      ? '空き駐車枠 [P] 内！（減速して停車すると駐車完了 +800pts）'
+                      : telemetry.inMergeLane
+                        ? '加速車線走行中（十分に加速して右の本線へ合流 ↗）'
+                        : telemetry.inSaApron
+                          ? `${telemetry.activeFacilityKind === 'pa' ? 'PA' : 'SA'} 構内走行中（緑枠[P]で駐車 / 前方加速車線で合流）`
+                          : telemetry.inJctRamp
+                            ? 'JCT高架分岐ランプ走行中（連絡ゲート通過でJCTクリア！）'
+                            : telemetry.inIcRamp
+                              ? 'IC 出口ランプ進入中（4レーン料金所通過でゴール！）'
+                              : telemetry.nextMilestoneType === 'jct'
+                                ? `↙ あと ${Math.max(10, Math.round(telemetry.nextMilestoneDistM / 10) * 10)}m で JCT分岐（左から高架へ進入可）`
+                                : telemetry.nextMilestoneType === 'ic'
+                                  ? `↙ あと ${Math.max(10, Math.round(telemetry.nextMilestoneDistM / 10) * 10)}m で IC出口（ゴール可）`
+                                  : telemetry.nextMilestoneType === 'pa'
+                                    ? `↙ あと ${Math.max(10, Math.round(telemetry.nextMilestoneDistM / 10) * 10)}m で PA入口`
+                                    : `↙ あと ${Math.max(10, Math.round(telemetry.nextMilestoneDistM / 10) * 10)}m で SA入口`}
                 </div>
-                <div className="text-sm font-bold mt-0.5 flex items-center justify-between gap-2">
+                <div className="text-xs sm:text-sm font-bold mt-0.5 flex items-center justify-between gap-2">
                   <span>{telemetry.nextMilestoneName}</span>
-                  {telemetry.inMergeLane ? (
-                    <span className="px-1.5 py-0.5 rounded bg-amber-400 text-slate-950 text-[11px] font-extrabold shrink-0">
+                  {telemetry.isParked ? (
+                    <span className="px-1.5 py-0.5 rounded bg-emerald-400 text-slate-950 text-[10px] font-extrabold shrink-0">
+                      駐車中 P
+                    </span>
+                  ) : telemetry.inMergeLane ? (
+                    <span className="px-1.5 py-0.5 rounded bg-amber-400 text-slate-950 text-[10px] font-extrabold shrink-0">
                       合流注意 ↗
                     </span>
+                  ) : telemetry.inJctRamp ? (
+                    <span className="px-1.5 py-0.5 rounded bg-cyan-400 text-slate-950 text-[10px] font-extrabold shrink-0">
+                      高架分岐
+                    </span>
                   ) : !telemetry.inSaApron && !telemetry.inIcRamp ? (
-                    <span className="px-1.5 py-0.5 rounded bg-amber-400 text-slate-950 text-[11px] font-extrabold shrink-0">
+                    <span className="px-1.5 py-0.5 rounded bg-amber-400 text-slate-950 text-[10px] font-extrabold shrink-0">
                       左車線へ
                     </span>
                   ) : null}
                 </div>
                 {telemetry.nextMilestoneFeature && (
-                  <div className="text-[11px] text-slate-200/90 mt-1 leading-snug">
+                  <div className="text-[11px] text-slate-200/90 mt-1 leading-snug [@media(max-height:540px)]:hidden">
                     {telemetry.nextMilestoneFeature}
                   </div>
                 )}
@@ -197,8 +423,8 @@ export const HudOverlay: React.FC<HudOverlayProps> = ({
         </div>
 
         {/* Top-Right: Telemetry Score + Actions */}
-        <div className="pointer-events-auto flex items-center gap-2 sm:gap-3 bg-[#090f1a]/90 border border-slate-700/80 rounded-xl px-2.5 py-1.5 sm:px-3.5 sm:py-2.5 shadow-lg shrink-0">
-          <div className="text-right tabular-nums hidden md:block">
+        <div className="pointer-events-auto flex items-center gap-1.5 sm:gap-3 bg-[#090f1a]/90 border border-slate-700/80 rounded-xl px-2 py-1 sm:px-3.5 sm:py-2.5 [@media(max-height:540px)]:py-1 shadow-lg shrink-0">
+          <div className="text-right tabular-nums hidden lg:block">
             <div className="text-xs text-slate-400">
               走行 {telemetry.distanceKm.toFixed(2)} km
               <span className="mx-1.5 text-slate-600">·</span>
@@ -212,7 +438,7 @@ export const HudOverlay: React.FC<HudOverlayProps> = ({
             </div>
           </div>
 
-          <div className="hidden md:block h-7 w-px bg-slate-700/80" />
+          <div className="hidden lg:block h-7 w-px bg-slate-700/80" />
 
           <div className="flex items-center gap-1 sm:gap-1.5">
             {!isMobile && (
@@ -229,10 +455,20 @@ export const HudOverlay: React.FC<HudOverlayProps> = ({
               <>
                 <button
                   type="button"
+                  onClick={onToggleCinemaHud}
+                  title="全画面・爆走モード"
+                  aria-label="全画面・爆走モード"
+                  className="min-w-[38px] min-h-[38px] px-2 py-1.5 rounded-lg bg-gradient-to-r from-orange-500 to-rose-500 active:brightness-110 text-white text-xs font-extrabold flex items-center gap-1 transition-colors whitespace-nowrap"
+                >
+                  <Flame className="w-3.5 h-3.5 shrink-0" />
+                  <span>爆走</span>
+                </button>
+                <button
+                  type="button"
                   onClick={() => onSelectCamera(nextCameraMode())}
                   title="視点切替"
                   aria-label="視点切替"
-                  className="min-w-[42px] min-h-[42px] p-2 rounded-lg bg-slate-800 active:bg-sky-600 text-slate-100 flex items-center justify-center transition-colors"
+                  className="min-w-[38px] min-h-[38px] p-1.5 rounded-lg bg-slate-800 active:bg-sky-600 text-slate-100 flex items-center justify-center transition-colors"
                 >
                   <Camera className="w-4 h-4" />
                 </button>
@@ -241,14 +477,14 @@ export const HudOverlay: React.FC<HudOverlayProps> = ({
                   onClick={onToggleGyro}
                   title="傾きハンドル (ジャイロ)"
                   aria-label="傾きハンドル切替"
-                  className={`min-w-[42px] min-h-[42px] px-2.5 py-2 rounded-lg text-xs font-bold flex items-center gap-1 transition-colors whitespace-nowrap ${
+                  className={`min-w-[38px] min-h-[38px] px-2 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1 transition-colors whitespace-nowrap ${
                     gyroEnabled
                       ? 'bg-emerald-600 text-white'
                       : 'bg-slate-800 text-slate-300'
                   }`}
                 >
                   <Compass className="w-4 h-4 shrink-0" />
-                  <span className="hidden xs:inline">傾き</span>
+                  <span className="hidden sm:inline">傾き</span>
                 </button>
               </>
             )}
@@ -310,7 +546,7 @@ export const HudOverlay: React.FC<HudOverlayProps> = ({
       {/* Compact Top-Center Road Guidance & Legal-Speed Notice (never blocks center road view) */}
       {isRunning && banner && (
         <div
-          className={`fixed top-16 md:top-3 left-1/2 -translate-x-1/2 z-20 w-[min(92vw,440px)] flex items-start gap-2.5 rounded-xl px-3 py-2 border shadow-xl pointer-events-none pt-safe ${
+          className={`fixed top-16 [@media(max-height:540px)]:top-1.5 md:top-3 left-1/2 -translate-x-1/2 z-20 w-[min(92vw,420px)] [@media(max-height:540px)]:w-[min(42vw,310px)] flex items-start gap-2 rounded-xl px-3 py-1.5 [@media(max-height:540px)]:px-2.5 [@media(max-height:540px)]:py-1 border shadow-xl pointer-events-none pt-safe ${
             banner.tone === 'warning'
               ? 'bg-[#2a0f12]/92 border-red-400/90 text-red-50'
               : banner.tone === 'humor'
@@ -319,24 +555,26 @@ export const HudOverlay: React.FC<HudOverlayProps> = ({
           }`}
         >
           {banner.tone === 'humor' || banner.tone === 'warning' ? (
-            <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+            <AlertTriangle className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-400 shrink-0 mt-0.5" />
           ) : (
-            <Info className="w-4 h-4 text-emerald-300 shrink-0 mt-0.5" />
+            <Info className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-emerald-300 shrink-0 mt-0.5" />
           )}
           <div className="leading-snug min-w-0">
-            <div className="font-bold text-xs sm:text-sm tracking-tight truncate">{banner.title}</div>
-            <div className="text-[11px] text-slate-200 mt-0.5 line-clamp-2">{banner.body}</div>
+            <div className="font-bold text-[11px] sm:text-xs tracking-tight truncate">{banner.title}</div>
+            <div className="text-[10px] sm:text-[11px] text-slate-200 mt-0.5 line-clamp-2 [@media(max-height:540px)]:line-clamp-1">
+              {banner.body}
+            </div>
           </div>
         </div>
       )}
 
       {/* BOTTOM AREA */}
       {isMobile ? (
-        <div className="relative flex items-end justify-between gap-2 pb-1">
+        <div className="relative flex items-end justify-between gap-2 pb-0.5">
           {/* Mobile Bottom-Left: Ergonomic Steering Pads */}
-          <div className="pointer-events-auto flex flex-col gap-2">
+          <div className="pointer-events-auto flex flex-col gap-1.5">
             {isRunning && (
-              <div className="flex items-center gap-2.5 touch-none select-none">
+              <div className="flex items-center gap-2 touch-none select-none">
                 <button
                   type="button"
                   onPointerDown={(e) => {
@@ -346,7 +584,7 @@ export const HudOverlay: React.FC<HudOverlayProps> = ({
                   onPointerUp={() => onTouchInput({ left: false })}
                   onPointerCancel={() => onTouchInput({ left: false })}
                   aria-label="左へステア"
-                  className="w-16 h-16 sm:w-20 sm:h-20 rounded-2xl bg-[#0b1322]/88 border-2 border-slate-600/80 active:border-amber-400 active:bg-amber-500 active:text-slate-950 text-white font-bold text-2xl shadow-xl touch-none select-none flex items-center justify-center"
+                  className="w-16 h-16 landscape:w-16 landscape:h-13 rounded-2xl bg-[#0b1322]/85 border-2 border-slate-600/80 active:border-amber-400 active:bg-amber-500 active:text-slate-950 text-white font-bold text-2xl shadow-xl touch-none select-none flex items-center justify-center"
                 >
                   ←
                 </button>
@@ -359,29 +597,61 @@ export const HudOverlay: React.FC<HudOverlayProps> = ({
                   onPointerUp={() => onTouchInput({ right: false })}
                   onPointerCancel={() => onTouchInput({ right: false })}
                   aria-label="右へステア"
-                  className="w-16 h-16 sm:w-20 sm:h-20 rounded-2xl bg-[#0b1322]/88 border-2 border-slate-600/80 active:border-amber-400 active:bg-amber-500 active:text-slate-950 text-white font-bold text-2xl shadow-xl touch-none select-none flex items-center justify-center"
+                  className="w-16 h-16 landscape:w-16 landscape:h-13 rounded-2xl bg-[#0b1322]/85 border-2 border-slate-600/80 active:border-amber-400 active:bg-amber-500 active:text-slate-950 text-white font-bold text-2xl shadow-xl touch-none select-none flex items-center justify-center"
                 >
                   →
                 </button>
               </div>
             )}
-            <div className="text-[10px] text-slate-300 bg-[#090f1a]/82 border border-slate-800 rounded-lg px-2.5 py-1 w-fit tabular-nums">
+            <div className="text-[10px] text-slate-300 bg-[#090f1a]/82 border border-slate-800 rounded-lg px-2 py-0.5 w-fit tabular-nums landscape:hidden">
               {gyroEnabled ? '傾きステア ON · 走行 ' : '走行 '}
               {telemetry.distanceKm.toFixed(1)} km · {telemetry.score.toLocaleString()} pts
             </div>
           </div>
 
-          {/* Mobile Bottom-Right: Compact Speedometer + Flash + Brake/Throttle Pedals */}
-          <div className="pointer-events-auto flex flex-col items-end gap-2">
-            <div className="bg-[#090f1a]/88 border border-slate-700/80 rounded-xl px-3 py-1.5 shadow-xl flex items-baseline gap-3">
-              <div className="flex items-baseline gap-1">
-                <span
-                  className={`font-display-telemetry font-bold text-3xl leading-none tabular-nums ${
-                    telemetry.isSpeedLimited
+          {/* Mobile Landscape Bottom-Center: Sleek Single-Line Speedometer Bar (never stacks over pedals!) */}
+          <div className="hidden landscape:flex items-baseline gap-3 bg-[#090f1a]/84 border border-slate-700/80 rounded-xl px-3.5 py-1.5 shadow-xl tabular-nums mb-0.5">
+            <div className="flex items-baseline gap-1">
+              <span
+                className={`font-display-telemetry font-bold text-2xl leading-none ${
+                  isReverse
+                    ? 'text-rose-400'
+                    : telemetry.isSpeedLimited
                       ? 'text-amber-400'
                       : speedRounded >= 240
                         ? 'text-sky-300'
                         : 'text-white'
+                }`}
+              >
+                {speedRounded}
+              </span>
+              <span className="text-[10px] text-slate-400">km/h</span>
+            </div>
+            <div
+              className={`font-display-telemetry font-bold text-sm ${
+                telemetry.isParked ? 'text-emerald-400' : isReverse ? 'text-rose-400' : 'text-amber-400'
+              }`}
+            >
+              {gearBadgeLabel}
+            </div>
+            <div className="text-[10px] text-slate-300 border-l border-slate-700 pl-2.5">
+              {telemetry.distanceKm.toFixed(1)}km · {telemetry.score.toLocaleString()}pts
+            </div>
+          </div>
+
+          {/* Mobile Bottom-Right: Portrait Speedometer + Flash + Brake/Throttle Pedals */}
+          <div className="pointer-events-auto flex flex-col items-end gap-2">
+            <div className="landscape:hidden bg-[#090f1a]/88 border border-slate-700/80 rounded-xl px-3 py-1.5 shadow-xl flex items-baseline gap-3">
+              <div className="flex items-baseline gap-1">
+                <span
+                  className={`font-display-telemetry font-bold text-3xl leading-none tabular-nums ${
+                    isReverse
+                      ? 'text-rose-400'
+                      : telemetry.isSpeedLimited
+                        ? 'text-amber-400'
+                        : speedRounded >= 240
+                          ? 'text-sky-300'
+                          : 'text-white'
                   }`}
                 >
                   {speedRounded}
@@ -389,9 +659,13 @@ export const HudOverlay: React.FC<HudOverlayProps> = ({
                 <span className="text-[10px] text-slate-400">km/h</span>
               </div>
               <div className="text-right leading-none">
-                <span className="text-[9px] text-slate-400 mr-1">G</span>
-                <span className="font-display-telemetry font-bold text-lg text-amber-400">
-                  {telemetry.gear}
+                <span className="text-[9px] text-slate-400 mr-1">GEAR</span>
+                <span
+                  className={`font-display-telemetry font-bold text-lg ${
+                    telemetry.isParked ? 'text-emerald-400' : isReverse ? 'text-rose-400' : 'text-amber-400'
+                  }`}
+                >
+                  {gearDisplay}
                 </span>
               </div>
             </div>
@@ -407,7 +681,7 @@ export const HudOverlay: React.FC<HudOverlayProps> = ({
                   onPointerUp={() => onTouchInput({ hornOrFlash: false })}
                   onPointerCancel={() => onTouchInput({ hornOrFlash: false })}
                   aria-label="パッシング"
-                  className="w-12 h-14 rounded-xl bg-sky-950/85 border border-sky-400/50 active:bg-sky-400 active:text-slate-950 text-sky-200 flex flex-col items-center justify-center gap-0.5 text-[10px] font-bold touch-none select-none shadow-lg"
+                  className="w-11 h-14 landscape:w-11 landscape:h-12 rounded-xl bg-sky-950/85 border border-sky-400/50 active:bg-sky-400 active:text-slate-950 text-sky-200 flex flex-col items-center justify-center gap-0.5 text-[10px] font-bold touch-none select-none shadow-lg"
                 >
                   <Zap className="w-4 h-4" />
                   <span>合図</span>
@@ -420,9 +694,9 @@ export const HudOverlay: React.FC<HudOverlayProps> = ({
                   }}
                   onPointerUp={() => onTouchInput({ brake: false })}
                   onPointerCancel={() => onTouchInput({ brake: false })}
-                  className="w-16 h-16 rounded-2xl bg-red-950/85 border-2 border-red-400/70 active:bg-red-500 active:text-white text-red-100 text-xs font-extrabold touch-none select-none shadow-xl flex items-center justify-center"
+                  className="w-16 h-16 landscape:w-16 landscape:h-13 rounded-2xl bg-red-950/85 border-2 border-red-400/70 active:bg-red-500 active:text-white text-red-100 text-[11px] font-extrabold touch-none select-none shadow-xl flex items-center justify-center"
                 >
-                  減速
+                  {isReverse || speedRounded <= 2 ? '減速/R' : '減速'}
                 </button>
                 <button
                   type="button"
@@ -432,7 +706,7 @@ export const HudOverlay: React.FC<HudOverlayProps> = ({
                   }}
                   onPointerUp={() => onTouchInput({ throttle: false })}
                   onPointerCancel={() => onTouchInput({ throttle: false })}
-                  className="w-20 h-24 rounded-2xl bg-emerald-900/88 border-2 border-emerald-400/80 active:bg-emerald-400 active:text-slate-950 text-emerald-50 text-sm font-extrabold touch-none select-none shadow-xl flex items-center justify-center"
+                  className="w-20 h-24 landscape:w-20 landscape:h-15 rounded-2xl bg-emerald-900/88 border-2 border-emerald-400/80 active:bg-emerald-400 active:text-slate-950 text-emerald-50 text-sm font-extrabold touch-none select-none shadow-xl flex items-center justify-center"
                 >
                   加速
                 </button>
@@ -634,11 +908,13 @@ export const HudOverlay: React.FC<HudOverlayProps> = ({
               <div className="flex items-baseline gap-1.5">
                 <span
                   className={`font-display-telemetry font-bold text-4xl sm:text-5xl leading-none tabular-nums ${
-                    telemetry.isSpeedLimited
-                      ? 'text-amber-400'
-                      : speedRounded >= 240
-                        ? 'text-sky-300'
-                        : 'text-white'
+                    isReverse
+                      ? 'text-rose-400'
+                      : telemetry.isSpeedLimited
+                        ? 'text-amber-400'
+                        : speedRounded >= 240
+                          ? 'text-sky-300'
+                          : 'text-white'
                   }`}
                 >
                   {speedRounded}
@@ -648,8 +924,12 @@ export const HudOverlay: React.FC<HudOverlayProps> = ({
 
               <div className="text-right">
                 <div className="text-[10px] text-slate-400">GEAR</div>
-                <div className="font-display-telemetry font-bold text-2xl leading-none text-amber-400">
-                  {telemetry.gear}
+                <div
+                  className={`font-display-telemetry font-bold text-2xl leading-none ${
+                    telemetry.isParked ? 'text-emerald-400' : isReverse ? 'text-rose-400' : 'text-amber-400'
+                  }`}
+                >
+                  {gearDisplay}
                 </div>
               </div>
             </div>
@@ -657,7 +937,7 @@ export const HudOverlay: React.FC<HudOverlayProps> = ({
             <div className="mt-2.5 h-1.5 w-full rounded-full bg-slate-800 overflow-hidden">
               <div
                 className={`h-full transition-all duration-75 ${
-                  telemetry.isSpeedLimited ? 'bg-amber-400' : 'bg-sky-400'
+                  isReverse ? 'bg-rose-400' : telemetry.isSpeedLimited ? 'bg-amber-400' : 'bg-sky-400'
                 }`}
                 style={{ width: `${speedPct}%` }}
               />
@@ -681,14 +961,20 @@ export const HudOverlay: React.FC<HudOverlayProps> = ({
                 路面グリップ {gripPct}%
               </span>
               <div className="flex items-center gap-2 font-bold">
+                {telemetry.isParked && <span className="text-emerald-400">PARKED</span>}
+                {isReverse && <span className="text-rose-400">REVERSE</span>}
                 {telemetry.slipstreamActive && <span className="text-cyan-300">SLIPSTREAM</span>}
                 {telemetry.absActive && <span className="text-red-400">ABS</span>}
                 {telemetry.isSpeedLimited && <span className="text-amber-400">300 LIMIT</span>}
-                {!telemetry.slipstreamActive && !telemetry.absActive && !telemetry.isSpeedLimited && (
-                  <span className="text-slate-500 font-normal">
-                    {telemetry.activeWeather === ActiveWeather.Rain ? 'ウェット注意' : 'ドライ安定'}
-                  </span>
-                )}
+                {!telemetry.isParked &&
+                  !isReverse &&
+                  !telemetry.slipstreamActive &&
+                  !telemetry.absActive &&
+                  !telemetry.isSpeedLimited && (
+                    <span className="text-slate-500 font-normal">
+                      {telemetry.activeWeather === ActiveWeather.Rain ? 'ウェット注意' : 'ドライ安定'}
+                    </span>
+                  )}
               </div>
             </div>
           </div>

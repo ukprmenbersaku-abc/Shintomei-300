@@ -78,6 +78,9 @@ export interface TelemetrySnapshot {
   activeFacilityKind: 'sa' | 'pa' | null;
   inMergeLane: boolean;
   inIcRamp: boolean;
+  inJctRamp: boolean;
+  inParkingBay: boolean;
+  isParked: boolean;
   isSpeedLimited: boolean;
   isBrakingHard: boolean;
   absActive: boolean;
@@ -86,6 +89,7 @@ export interface TelemetrySnapshot {
 }
 
 export interface IcClearSummary {
+  kind?: 'ic' | 'jct';
   icName: string;
   branchName: string;
   distanceKm: number;
