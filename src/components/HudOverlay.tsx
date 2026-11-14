@@ -5,6 +5,7 @@ import {
   CarPaintId,
   DeviceMode,
   InputState,
+  LiveWeatherInfo,
   QualityMode,
   SafetyBannerMessage,
   TelemetrySnapshot,
@@ -17,11 +18,13 @@ import {
   Camera,
   ChevronDown,
   ChevronUp,
+  CloudSun,
   Compass,
   Eye,
   EyeOff,
   Flame,
   Info,
+  MapPin,
   Maximize2,
   Minimize2,
   Pause,
@@ -39,6 +42,8 @@ interface HudOverlayProps {
   gyroEnabled: boolean;
   banner: SafetyBannerMessage | null;
   weatherMode: WeatherMode;
+  liveWeather: LiveWeatherInfo | null;
+  liveWeatherLoading: boolean;
   cameraMode: CameraMode;
   trafficDensity: TrafficDensity;
   qualityMode: QualityMode;
@@ -52,6 +57,7 @@ interface HudOverlayProps {
   onToggleCinemaHud: () => void;
   onToggleGyro: () => void;
   onSelectWeather: (mode: WeatherMode) => void;
+  onSyncGeoWeather: () => void;
   onSelectCamera: (mode: CameraMode) => void;
   onSelectTraffic: (density: TrafficDensity) => void;
   onSelectQuality: (mode: QualityMode) => void;
@@ -59,6 +65,7 @@ interface HudOverlayProps {
   onToggleMute: () => void;
   onPause: () => void;
   onRestart: () => void;
+  onExitJctBranch?: () => void;
   onTouchInput: (partial: Partial<InputState>) => void;
   onShowLegalGuide: () => void;
 }
@@ -70,6 +77,8 @@ export const HudOverlay: React.FC<HudOverlayProps> = ({
   gyroEnabled,
   banner,
   weatherMode,
+  liveWeather,
+  liveWeatherLoading,
   cameraMode,
   trafficDensity,
   qualityMode,
@@ -83,6 +92,7 @@ export const HudOverlay: React.FC<HudOverlayProps> = ({
   onToggleCinemaHud,
   onToggleGyro,
   onSelectWeather,
+  onSyncGeoWeather,
   onSelectCamera,
   onSelectTraffic,
   onSelectQuality,
@@ -90,6 +100,7 @@ export const HudOverlay: React.FC<HudOverlayProps> = ({
   onToggleMute,
   onPause,
   onRestart,
+  onExitJctBranch,
   onTouchInput,
   onShowLegalGuide,
 }) => {
@@ -97,16 +108,22 @@ export const HudOverlay: React.FC<HudOverlayProps> = ({
 
   const weatherCfg = WEATHER_CONFIG[telemetry.activeWeather];
   const speedRounded = Math.abs(Math.round(telemetry.speedKmh));
+  const isEv = telemetry.vehicleType === 'ev';
+  const isBike = telemetry.vehicleType === 'bike';
   const gearDisplay = telemetry.isParked
     ? 'P'
     : telemetry.gear === -1
       ? 'R'
       : telemetry.gear === 0
         ? 'P'
-        : String(telemetry.gear);
-  const gearBadgeLabel = gearDisplay === 'P' || gearDisplay === 'R' ? gearDisplay : `G${gearDisplay}`;
+        : isEv
+          ? 'D'
+          : String(telemetry.gear);
+  const gearBadgeLabel =
+    gearDisplay === 'P' || gearDisplay === 'R' || gearDisplay === 'D' ? gearDisplay : `G${gearDisplay}`;
   const isReverse = telemetry.gear === -1;
-  const rpmPct = Math.min(100, Math.max(0, ((telemetry.rpm - 1000) / 7400) * 100));
+  const maxRedline = isBike ? 13500 : isEv ? 16000 : 8400;
+  const rpmPct = Math.min(100, Math.max(0, ((telemetry.rpm - (isEv ? 0 : 1000)) / maxRedline) * 100));
   const speedPct = Math.min(100, (Math.abs(telemetry.speedKmh) / 300) * 100);
   const gripPct = Math.round(telemetry.gripLevel * 100);
 
@@ -145,9 +162,11 @@ export const HudOverlay: React.FC<HudOverlayProps> = ({
     // Mobile Fullscreen Blazing Mode: ultra-clean highway view + phantom corner touch controls
     const showBlazingExitHint =
       telemetry.inSaApron ||
+      telemetry.inFreePlaza ||
       telemetry.inMergeLane ||
       telemetry.inIcRamp ||
       telemetry.inJctRamp ||
+      telemetry.inJctBranch ||
       telemetry.isParked ||
       telemetry.inParkingBay ||
       telemetry.nextMilestoneDistM < 420;
@@ -163,17 +182,19 @@ export const HudOverlay: React.FC<HudOverlayProps> = ({
                   ? '駐車完了 [P] · 加速/減速長押し(R)で発進'
                   : telemetry.inParkingBay
                     ? '緑枠内！停車で駐車 (+800pts)'
-                    : telemetry.inJctRamp
-                      ? `${telemetry.nextMilestoneName} 高架ランプ走行中`
-                      : telemetry.inMergeLane
-                        ? `${telemetry.nextMilestoneName} 合流 ↗`
-                        : telemetry.inSaApron
-                          ? `${telemetry.nextMilestoneName} 構内（緑枠[P]で駐車可）`
-                          : telemetry.inIcRamp
-                            ? `${telemetry.nextMilestoneName} 出口へ`
-                            : telemetry.nextMilestoneType === 'jct'
-                              ? `↙ ${Math.max(10, Math.round(telemetry.nextMilestoneDistM / 10) * 10)}m ${telemetry.nextMilestoneName} 分岐`
-                              : `↙ ${Math.max(10, Math.round(telemetry.nextMilestoneDistM / 10) * 10)}m ${telemetry.nextMilestoneName}`}
+                    : telemetry.inJctBranch
+                      ? `${telemetry.nextMilestoneName} 連絡道 · 残り ${(telemetry.jctBranchRemainingM / 1000).toFixed(2)}km`
+                      : telemetry.inJctRamp
+                        ? `${telemetry.nextMilestoneName} 高架ランプ走行中`
+                        : telemetry.inMergeLane
+                          ? `${telemetry.nextMilestoneName} 合流 ↗`
+                          : telemetry.inFreePlaza || telemetry.inSaApron
+                            ? `${telemetry.nextMilestoneName} 構内自由走行（緑枠[P] / 出口↑）`
+                            : telemetry.inIcRamp
+                              ? `${telemetry.nextMilestoneName} 出口へ`
+                              : telemetry.nextMilestoneType === 'jct'
+                                ? `↙ ${Math.max(10, Math.round(telemetry.nextMilestoneDistM / 10) * 10)}m ${telemetry.nextMilestoneName} 分岐`
+                                : `↙ ${Math.max(10, Math.round(telemetry.nextMilestoneDistM / 10) * 10)}m ${telemetry.nextMilestoneName}`}
               </div>
             )}
           </div>
@@ -311,59 +332,67 @@ export const HudOverlay: React.FC<HudOverlayProps> = ({
 
   return (
     <div className="fixed inset-0 z-10 pointer-events-none flex flex-col justify-between p-2 sm:p-5 [@media(max-height:540px)]:p-1.5 pt-safe pb-safe px-safe">
-      {/* TOP BAR ROW */}
-      <div className="flex items-start justify-between gap-2 sm:gap-4">
-        {/* Top-Left: Shin-Tomei Route Sign + Approaching SA/IC Turnoff Guidance */}
-        <div className="flex flex-col gap-1.5 sm:gap-2 min-w-0">
-          <div className="pointer-events-auto flex items-center gap-2 sm:gap-3 bg-[#090f1a]/90 border border-slate-700/80 rounded-xl px-2.5 py-1.5 sm:px-3.5 sm:py-2.5 [@media(max-height:540px)]:px-2 [@media(max-height:540px)]:py-1 shadow-lg">
-            <div className="w-10 h-10 sm:w-11 sm:h-11 [@media(max-height:540px)]:w-8 [@media(max-height:540px)]:h-8 rounded-full bg-white border-[3px] sm:border-[3.5px] border-[#d91c2b] flex flex-col items-center justify-center shrink-0">
-              <span className="font-display-telemetry font-bold text-xs sm:text-sm [@media(max-height:540px)]:text-[11px] leading-none text-slate-900">
-                300
-              </span>
-              <span className="text-[7px] font-bold text-slate-600 leading-none [@media(max-height:540px)]:hidden">
-                km/h
-              </span>
-            </div>
+      {/* TOP STACK: Top Bar Row + In-Flow Banner Below (zero overlap!) */}
+      <div className="flex flex-col gap-1.5 sm:gap-2">
+        {/* TOP BAR ROW */}
+        <div className="flex items-start justify-between gap-1.5 sm:gap-4">
+          {/* Top-Left: Shin-Tomei Route Sign + Approaching SA/IC Turnoff Guidance */}
+          <div className="flex flex-col gap-1.5 sm:gap-2 min-w-0 flex-1 sm:flex-initial">
+            <div className="pointer-events-auto flex items-center gap-1.5 sm:gap-3 bg-[#090f1a]/90 border border-slate-700/80 rounded-xl px-2 py-1 sm:px-3.5 sm:py-2.5 [@media(max-height:540px)]:px-2 [@media(max-height:540px)]:py-1 shadow-lg w-fit max-w-full">
+              <div className="w-8 h-8 sm:w-11 sm:h-11 [@media(max-height:540px)]:w-8 [@media(max-height:540px)]:h-8 rounded-full bg-white border-[2.5px] sm:border-[3.5px] border-[#d91c2b] flex flex-col items-center justify-center shrink-0">
+                <span className="font-display-telemetry font-bold text-[11px] sm:text-sm [@media(max-height:540px)]:text-[11px] leading-none text-slate-900">
+                  300
+                </span>
+                <span className="text-[7px] font-bold text-slate-600 leading-none hidden sm:block [@media(max-height:540px)]:hidden">
+                  km/h
+                </span>
+              </div>
 
-            <div className="min-w-0">
-              <div className="flex items-center gap-1.5 sm:gap-2 text-[11px] sm:text-xs text-emerald-300 font-semibold">
-                <span className="px-1.5 py-0.5 rounded bg-[#006b3f] text-white font-display-telemetry text-[10px] sm:text-[11px] border border-emerald-300/40 shrink-0">
-                  E1A
-                </span>
-                <span className="truncate max-w-[165px] sm:max-w-[230px] md:max-w-none">
-                  {telemetry.currentRegionName}
-                </span>
-              </div>
-              <div className="flex items-center gap-1.5 sm:gap-2 text-[10px] sm:text-xs text-slate-300 mt-0.5 sm:mt-1 tabular-nums">
-                <span>{weatherCfg.labelJa}</span>
-                <span aria-hidden="true" className="text-slate-500">·</span>
-                <span>KP {telemetry.kilometerPost.toFixed(1)}</span>
-                {telemetry.inTunnel && (
-                  <>
-                    <span aria-hidden="true" className="text-slate-500">·</span>
-                    <span className="text-amber-300 font-medium">トンネル</span>
-                  </>
-                )}
+              <div className="min-w-0">
+                <div className="flex items-center gap-1 sm:gap-2 text-[10px] sm:text-xs text-emerald-300 font-semibold">
+                  <span className="px-1 sm:px-1.5 py-0.5 rounded bg-[#006b3f] text-white font-display-telemetry text-[9px] sm:text-[11px] border border-emerald-300/40 shrink-0">
+                    E1A
+                  </span>
+                  <span className="truncate max-w-[118px] sm:max-w-[230px] md:max-w-none">
+                    {telemetry.currentRegionName}
+                  </span>
+                </div>
+                <div className="flex items-center gap-1 sm:gap-2 text-[9px] sm:text-xs text-slate-300 mt-0.5 sm:mt-1 tabular-nums truncate">
+                  <span className="truncate">
+                    {weatherMode === WeatherMode.Live && liveWeather
+                      ? `現実:${liveWeather.weatherLabelJa} ${Math.round(liveWeather.temperatureC)}℃`
+                      : weatherCfg.shortJa}
+                  </span>
+                  <span aria-hidden="true" className="text-slate-500">·</span>
+                  <span>KP {telemetry.kilometerPost.toFixed(1)}</span>
+                  {telemetry.inTunnel && (
+                    <>
+                      <span aria-hidden="true" className="text-slate-500">·</span>
+                      <span className="text-amber-300 font-medium">トンネル</span>
+                    </>
+                  )}
+                </div>
               </div>
             </div>
-          </div>
 
           {/* High-Visibility Approaching SA / PA / IC / JCT / Parking Navigation Card */}
           {isRunning &&
             (telemetry.inSaApron ||
+              telemetry.inFreePlaza ||
               telemetry.inMergeLane ||
               telemetry.inIcRamp ||
               telemetry.inJctRamp ||
+              telemetry.inJctBranch ||
               telemetry.isParked ||
               telemetry.inParkingBay ||
               telemetry.nextMilestoneDistM < 650) && (
               <div
-                className={`rounded-xl px-3 py-2 [@media(max-height:540px)]:px-2.5 [@media(max-height:540px)]:py-1 border-2 shadow-xl max-w-xs [@media(max-height:540px)]:max-w-[260px] tabular-nums ${
+                className={`pointer-events-auto rounded-xl px-3 py-2 [@media(max-height:540px)]:px-2.5 [@media(max-height:540px)]:py-1 border-2 shadow-xl max-w-xs [@media(max-height:540px)]:max-w-[260px] tabular-nums ${
                   telemetry.isParked || telemetry.inParkingBay
                     ? 'bg-[#05291c]/95 border-emerald-400 text-white'
                     : telemetry.inMergeLane
                       ? 'bg-[#211805]/95 border-amber-400 text-white'
-                      : telemetry.inJctRamp || telemetry.nextMilestoneType === 'jct'
+                      : telemetry.inJctBranch || telemetry.inJctRamp || telemetry.nextMilestoneType === 'jct'
                         ? 'bg-[#072636]/95 border-cyan-400 text-white'
                         : telemetry.inIcRamp || telemetry.nextMilestoneType === 'ic'
                           ? 'bg-[#062e1e]/95 border-amber-400 text-white'
@@ -377,21 +406,25 @@ export const HudOverlay: React.FC<HudOverlayProps> = ({
                     ? '駐車完了 [P]（アクセルで前進 · 減速長押しでバックR）'
                     : telemetry.inParkingBay
                       ? '空き駐車枠 [P] 内！（減速して停車すると駐車完了 +800pts）'
-                      : telemetry.inMergeLane
-                        ? '加速車線走行中（十分に加速して右の本線へ合流 ↗）'
-                        : telemetry.inSaApron
-                          ? `${telemetry.activeFacilityKind === 'pa' ? 'PA' : 'SA'} 構内走行中（緑枠[P]で駐車 / 前方加速車線で合流）`
-                          : telemetry.inJctRamp
-                            ? 'JCT高架分岐ランプ走行中（連絡ゲート通過でJCTクリア！）'
-                            : telemetry.inIcRamp
-                              ? 'IC 出口ランプ進入中（4レーン料金所通過でゴール！）'
-                              : telemetry.nextMilestoneType === 'jct'
-                                ? `↙ あと ${Math.max(10, Math.round(telemetry.nextMilestoneDistM / 10) * 10)}m で JCT分岐（左から高架へ進入可）`
-                                : telemetry.nextMilestoneType === 'ic'
-                                  ? `↙ あと ${Math.max(10, Math.round(telemetry.nextMilestoneDistM / 10) * 10)}m で IC出口（ゴール可）`
-                                  : telemetry.nextMilestoneType === 'pa'
-                                    ? `↙ あと ${Math.max(10, Math.round(telemetry.nextMilestoneDistM / 10) * 10)}m で PA入口`
-                                    : `↙ あと ${Math.max(10, Math.round(telemetry.nextMilestoneDistM / 10) * 10)}m で SA入口`}
+                      : telemetry.inJctBranch
+                        ? `JCT連絡道 5.0km 走行中（終点まで あと ${(telemetry.jctBranchRemainingM / 1000).toFixed(2)}km）`
+                        : telemetry.inMergeLane
+                          ? '加速車線走行中（十分に加速して右の本線へ合流 ↗）'
+                          : telemetry.inFreePlaza
+                            ? `${telemetry.activeFacilityKind === 'pa' ? 'PA' : 'SA'} 構内自由走行（前後左右＆Rで駐車 / 出口↑へ）`
+                            : telemetry.inSaApron
+                              ? `${telemetry.activeFacilityKind === 'pa' ? 'PA' : 'SA'} 構内（緑枠[P]で駐車 / 前方出口ゲートへ）`
+                              : telemetry.inJctRamp
+                                ? 'JCT高架分岐ランプ走行中（直進で5.0km連絡道へ！）'
+                                : telemetry.inIcRamp
+                                  ? 'IC 出口ランプ進入中（4レーン料金所通過でゴール！）'
+                                  : telemetry.nextMilestoneType === 'jct'
+                                    ? `↙ あと ${Math.max(10, Math.round(telemetry.nextMilestoneDistM / 10) * 10)}m で JCT分岐（5km走行可）`
+                                    : telemetry.nextMilestoneType === 'ic'
+                                      ? `↙ あと ${Math.max(10, Math.round(telemetry.nextMilestoneDistM / 10) * 10)}m で IC出口（ゴール可）`
+                                      : telemetry.nextMilestoneType === 'pa'
+                                        ? `↙ あと ${Math.max(10, Math.round(telemetry.nextMilestoneDistM / 10) * 10)}m で PA入口`
+                                        : `↙ あと ${Math.max(10, Math.round(telemetry.nextMilestoneDistM / 10) * 10)}m で SA入口`}
                 </div>
                 <div className="text-xs sm:text-sm font-bold mt-0.5 flex items-center justify-between gap-2">
                   <span>{telemetry.nextMilestoneName}</span>
@@ -399,6 +432,14 @@ export const HudOverlay: React.FC<HudOverlayProps> = ({
                     <span className="px-1.5 py-0.5 rounded bg-emerald-400 text-slate-950 text-[10px] font-extrabold shrink-0">
                       駐車中 P
                     </span>
+                  ) : telemetry.inJctBranch && onExitJctBranch ? (
+                    <button
+                      type="button"
+                      onClick={onExitJctBranch}
+                      className="px-2 py-0.5 rounded bg-cyan-400 hover:bg-cyan-300 text-slate-950 text-[10px] font-extrabold shrink-0 whitespace-nowrap"
+                    >
+                      本線に戻る
+                    </button>
                   ) : telemetry.inMergeLane ? (
                     <span className="px-1.5 py-0.5 rounded bg-amber-400 text-slate-950 text-[10px] font-extrabold shrink-0">
                       合流注意 ↗
@@ -407,12 +448,22 @@ export const HudOverlay: React.FC<HudOverlayProps> = ({
                     <span className="px-1.5 py-0.5 rounded bg-cyan-400 text-slate-950 text-[10px] font-extrabold shrink-0">
                       高架分岐
                     </span>
-                  ) : !telemetry.inSaApron && !telemetry.inIcRamp ? (
+                  ) : !telemetry.inSaApron && !telemetry.inFreePlaza && !telemetry.inIcRamp ? (
                     <span className="px-1.5 py-0.5 rounded bg-amber-400 text-slate-950 text-[10px] font-extrabold shrink-0">
                       左車線へ
                     </span>
                   ) : null}
                 </div>
+                {telemetry.inJctBranch && (
+                  <div className="mt-1.5 h-1.5 w-full rounded-full bg-slate-800 overflow-hidden">
+                    <div
+                      className="h-full bg-cyan-400 transition-all duration-150"
+                      style={{
+                        width: `${Math.min(100, Math.max(0, ((5000 - telemetry.jctBranchRemainingM) / 5000) * 100))}%`,
+                      }}
+                    />
+                  </div>
+                )}
                 {telemetry.nextMilestoneFeature && (
                   <div className="text-[11px] text-slate-200/90 mt-1 leading-snug [@media(max-height:540px)]:hidden">
                     {telemetry.nextMilestoneFeature}
@@ -420,153 +471,154 @@ export const HudOverlay: React.FC<HudOverlayProps> = ({
                 )}
               </div>
             )}
-        </div>
-
-        {/* Top-Right: Telemetry Score + Actions */}
-        <div className="pointer-events-auto flex items-center gap-1.5 sm:gap-3 bg-[#090f1a]/90 border border-slate-700/80 rounded-xl px-2 py-1 sm:px-3.5 sm:py-2.5 [@media(max-height:540px)]:py-1 shadow-lg shrink-0">
-          <div className="text-right tabular-nums hidden lg:block">
-            <div className="text-xs text-slate-400">
-              走行 {telemetry.distanceKm.toFixed(2)} km
-              <span className="mx-1.5 text-slate-600">·</span>
-              追越 {telemetry.overtakeCount}台
-            </div>
-            <div className="font-display-telemetry font-bold text-base text-white">
-              {telemetry.score.toLocaleString()} <span className="text-xs font-normal text-slate-400">pts</span>
-              {telemetry.nearMissStreak > 1 && (
-                <span className="ml-2 text-xs text-amber-400">×{telemetry.nearMissStreak} ニアミス</span>
-              )}
-            </div>
           </div>
 
-          <div className="hidden lg:block h-7 w-px bg-slate-700/80" />
+          {/* Top-Right: Telemetry Score + Actions */}
+          <div className="pointer-events-auto flex items-center gap-1 sm:gap-3 bg-[#090f1a]/90 border border-slate-700/80 rounded-xl px-1.5 py-1 sm:px-3.5 sm:py-2.5 [@media(max-height:540px)]:py-1 shadow-lg shrink-0">
+            <div className="text-right tabular-nums hidden lg:block">
+              <div className="text-xs text-slate-400">
+                走行 {telemetry.distanceKm.toFixed(2)} km
+                <span className="mx-1.5 text-slate-600">·</span>
+                追越 {telemetry.overtakeCount}台
+              </div>
+              <div className="font-display-telemetry font-bold text-base text-white">
+                {telemetry.score.toLocaleString()} <span className="text-xs font-normal text-slate-400">pts</span>
+                {telemetry.nearMissStreak > 1 && (
+                  <span className="ml-2 text-xs text-amber-400">×{telemetry.nearMissStreak} ニアミス</span>
+                )}
+              </div>
+            </div>
 
-          <div className="flex items-center gap-1 sm:gap-1.5">
-            {!isMobile && (
+            <div className="hidden lg:block h-7 w-px bg-slate-700/80" />
+
+            <div className="flex items-center gap-1 sm:gap-1.5">
+              {!isMobile && (
+                <button
+                  type="button"
+                  onClick={onShowLegalGuide}
+                  title="現実の法定速度ガイド"
+                  className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-amber-300 text-xs font-medium transition-colors whitespace-nowrap"
+                >
+                  法定速度案内
+                </button>
+              )}
+              {isMobile && (
+                <>
+                  <button
+                    type="button"
+                    onClick={onToggleCinemaHud}
+                    title="全画面・爆走モード"
+                    aria-label="全画面・爆走モード"
+                    className="min-w-[34px] min-h-[34px] sm:min-w-[38px] sm:min-h-[38px] px-1.5 sm:px-2 py-1 rounded-lg bg-gradient-to-r from-orange-500 to-rose-500 active:brightness-110 text-white text-[11px] sm:text-xs font-extrabold flex items-center gap-1 transition-colors whitespace-nowrap"
+                  >
+                    <Flame className="w-3.5 h-3.5 shrink-0" />
+                    <span>爆走</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onSelectCamera(nextCameraMode())}
+                    title="視点切替"
+                    aria-label="視点切替"
+                    className="min-w-[34px] min-h-[34px] sm:min-w-[38px] sm:min-h-[38px] p-1 sm:p-1.5 rounded-lg bg-slate-800 active:bg-sky-600 text-slate-100 flex items-center justify-center transition-colors"
+                  >
+                    <Camera className="w-4 h-4" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={onToggleGyro}
+                    title="傾きハンドル (ジャイロ)"
+                    aria-label="傾きハンドル切替"
+                    className={`min-w-[34px] min-h-[34px] sm:min-w-[38px] sm:min-h-[38px] px-1.5 sm:px-2 py-1 rounded-lg text-xs font-bold flex items-center gap-1 transition-colors whitespace-nowrap ${
+                      gyroEnabled
+                        ? 'bg-emerald-600 text-white'
+                        : 'bg-slate-800 text-slate-300'
+                    }`}
+                  >
+                    <Compass className="w-4 h-4 shrink-0" />
+                    <span className="hidden sm:inline">傾き</span>
+                  </button>
+                </>
+              )}
+              {!isMobile && (
+                <>
+                  <button
+                    type="button"
+                    onClick={onToggleCinemaHud}
+                    title="HUDを消して鑑賞モード (U)"
+                    aria-label="HUDを消して鑑賞モード"
+                    className="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 transition-colors"
+                  >
+                    <EyeOff className="w-4 h-4" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={onToggleFullscreen}
+                    title={isFullscreen ? '全画面解除 (F)' : '全画面表示 (F)'}
+                    aria-label={isFullscreen ? '全画面解除' : '全画面表示'}
+                    className="p-2 rounded-lg bg-sky-700/80 hover:bg-sky-600 text-white transition-colors"
+                  >
+                    {isFullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+                  </button>
+                </>
+              )}
               <button
                 type="button"
-                onClick={onShowLegalGuide}
-                title="現実の法定速度ガイド"
-                className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-amber-300 text-xs font-medium transition-colors whitespace-nowrap"
+                onClick={onToggleMute}
+                title={muted ? '音声オン' : 'ミュート'}
+                aria-label={muted ? '音声オン' : 'ミュート'}
+                className="min-w-[34px] min-h-[34px] sm:min-w-[40px] sm:min-h-[40px] p-1.5 sm:p-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 flex items-center justify-center transition-colors"
               >
-                法定速度案内
+                {muted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
               </button>
-            )}
-            {isMobile && (
-              <>
+              {!isMobile && (
                 <button
                   type="button"
-                  onClick={onToggleCinemaHud}
-                  title="全画面・爆走モード"
-                  aria-label="全画面・爆走モード"
-                  className="min-w-[38px] min-h-[38px] px-2 py-1.5 rounded-lg bg-gradient-to-r from-orange-500 to-rose-500 active:brightness-110 text-white text-xs font-extrabold flex items-center gap-1 transition-colors whitespace-nowrap"
-                >
-                  <Flame className="w-3.5 h-3.5 shrink-0" />
-                  <span>爆走</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => onSelectCamera(nextCameraMode())}
-                  title="視点切替"
-                  aria-label="視点切替"
-                  className="min-w-[38px] min-h-[38px] p-1.5 rounded-lg bg-slate-800 active:bg-sky-600 text-slate-100 flex items-center justify-center transition-colors"
-                >
-                  <Camera className="w-4 h-4" />
-                </button>
-                <button
-                  type="button"
-                  onClick={onToggleGyro}
-                  title="傾きハンドル (ジャイロ)"
-                  aria-label="傾きハンドル切替"
-                  className={`min-w-[38px] min-h-[38px] px-2 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1 transition-colors whitespace-nowrap ${
-                    gyroEnabled
-                      ? 'bg-emerald-600 text-white'
-                      : 'bg-slate-800 text-slate-300'
-                  }`}
-                >
-                  <Compass className="w-4 h-4 shrink-0" />
-                  <span className="hidden sm:inline">傾き</span>
-                </button>
-              </>
-            )}
-            {!isMobile && (
-              <>
-                <button
-                  type="button"
-                  onClick={onToggleCinemaHud}
-                  title="HUDを消して鑑賞モード (U)"
-                  aria-label="HUDを消して鑑賞モード"
+                  onClick={onRestart}
+                  title="リスタート"
+                  aria-label="リスタート"
                   className="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 transition-colors"
                 >
-                  <EyeOff className="w-4 h-4" />
+                  <RotateCcw className="w-4 h-4" />
                 </button>
-                <button
-                  type="button"
-                  onClick={onToggleFullscreen}
-                  title={isFullscreen ? '全画面解除 (F)' : '全画面表示 (F)'}
-                  aria-label={isFullscreen ? '全画面解除' : '全画面表示'}
-                  className="p-2 rounded-lg bg-sky-700/80 hover:bg-sky-600 text-white transition-colors"
-                >
-                  {isFullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
-                </button>
-              </>
-            )}
-            <button
-              type="button"
-              onClick={onToggleMute}
-              title={muted ? '音声オン' : 'ミュート'}
-              aria-label={muted ? '音声オン' : 'ミュート'}
-              className="min-w-[40px] min-h-[40px] p-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 flex items-center justify-center transition-colors"
-            >
-              {muted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
-            </button>
-            {!isMobile && (
+              )}
               <button
                 type="button"
-                onClick={onRestart}
-                title="リスタート"
-                aria-label="リスタート"
-                className="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 transition-colors"
+                onClick={onPause}
+                title="メニュー / 設定"
+                aria-label="メニュー / 設定"
+                className="min-w-[34px] min-h-[34px] sm:min-w-[40px] sm:min-h-[40px] p-1.5 sm:p-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 flex items-center justify-center transition-colors"
               >
-                <RotateCcw className="w-4 h-4" />
+                <Pause className="w-4 h-4" />
               </button>
-            )}
-            <button
-              type="button"
-              onClick={onPause}
-              title="メニュー / 設定"
-              aria-label="メニュー / 設定"
-              className="min-w-[40px] min-h-[40px] p-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 flex items-center justify-center transition-colors"
-            >
-              <Pause className="w-4 h-4" />
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {/* Compact Top-Center Road Guidance & Legal-Speed Notice (never blocks center road view) */}
-      {isRunning && banner && (
-        <div
-          className={`fixed top-16 [@media(max-height:540px)]:top-1.5 md:top-3 left-1/2 -translate-x-1/2 z-20 w-[min(92vw,420px)] [@media(max-height:540px)]:w-[min(42vw,310px)] flex items-start gap-2 rounded-xl px-3 py-1.5 [@media(max-height:540px)]:px-2.5 [@media(max-height:540px)]:py-1 border shadow-xl pointer-events-none pt-safe ${
-            banner.tone === 'warning'
-              ? 'bg-[#2a0f12]/92 border-red-400/90 text-red-50'
-              : banner.tone === 'humor'
-                ? 'bg-[#241a08]/92 border-amber-400/90 text-amber-50'
-                : 'bg-[#072133]/92 border-emerald-400/90 text-slate-50'
-          }`}
-        >
-          {banner.tone === 'humor' || banner.tone === 'warning' ? (
-            <AlertTriangle className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-400 shrink-0 mt-0.5" />
-          ) : (
-            <Info className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-emerald-300 shrink-0 mt-0.5" />
-          )}
-          <div className="leading-snug min-w-0">
-            <div className="font-bold text-[11px] sm:text-xs tracking-tight truncate">{banner.title}</div>
-            <div className="text-[10px] sm:text-[11px] text-slate-200 mt-0.5 line-clamp-2 [@media(max-height:540px)]:line-clamp-1">
-              {banner.body}
             </div>
           </div>
         </div>
-      )}
+
+        {/* In-Flow Top-Center Road Guidance & Legal-Speed Notice (never overlaps top bar!) */}
+        {isRunning && banner && (
+          <div
+            className={`mx-auto w-[min(94vw,430px)] [@media(max-height:540px)]:w-[min(82vw,420px)] flex items-start gap-2 rounded-xl px-3 py-1.5 [@media(max-height:540px)]:px-2.5 [@media(max-height:540px)]:py-1 border shadow-xl pointer-events-none ${
+              banner.tone === 'warning'
+                ? 'bg-[#2a0f12]/92 border-red-400/90 text-red-50'
+                : banner.tone === 'humor'
+                  ? 'bg-[#241a08]/92 border-amber-400/90 text-amber-50'
+                  : 'bg-[#072133]/92 border-emerald-400/90 text-slate-50'
+            }`}
+          >
+            {banner.tone === 'humor' || banner.tone === 'warning' ? (
+              <AlertTriangle className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-400 shrink-0 mt-0.5" />
+            ) : (
+              <Info className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-emerald-300 shrink-0 mt-0.5" />
+            )}
+            <div className="leading-snug min-w-0">
+              <div className="font-bold text-[11px] sm:text-xs tracking-tight truncate">{banner.title}</div>
+              <div className="text-[10px] sm:text-[11px] text-slate-200 mt-0.5 line-clamp-2 [@media(max-height:540px)]:line-clamp-1">
+                {banner.body}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
 
       {/* BOTTOM AREA */}
       {isMobile ? (
@@ -760,7 +812,7 @@ export const HudOverlay: React.FC<HudOverlayProps> = ({
             )}
 
             <div className="flex items-center gap-2 text-[11px] text-slate-300 bg-[#090f1a]/82 border border-slate-800 rounded-lg px-2.5 py-1.5">
-              <span>現実では法定速度（120km/h）遵守</span>
+              <span>現実では法定速度（原則100km/h・指定区間120km/h）遵守</span>
               <span className="text-slate-600">·</span>
               <button
                 type="button"
@@ -816,6 +868,7 @@ export const HudOverlay: React.FC<HudOverlayProps> = ({
                 <div className="flex items-center gap-1 bg-[#05080f] p-1 rounded-lg border border-slate-800">
                   {[
                     { mode: WeatherMode.Auto, label: '自動' },
+                    { mode: WeatherMode.Live, label: '現実' },
                     { mode: WeatherMode.Clear, label: '晴' },
                     { mode: WeatherMode.Sunset, label: '夕' },
                     { mode: WeatherMode.Night, label: '夜' },
@@ -826,15 +879,30 @@ export const HudOverlay: React.FC<HudOverlayProps> = ({
                       key={item.mode}
                       type="button"
                       onClick={() => onSelectWeather(item.mode)}
-                      className={`px-2 py-1 rounded text-xs font-medium transition-colors whitespace-nowrap ${
+                      className={`px-2 py-1 rounded text-xs font-medium transition-colors whitespace-nowrap flex items-center gap-1 ${
                         weatherMode === item.mode
-                          ? 'bg-emerald-700 text-white'
+                          ? item.mode === WeatherMode.Live
+                            ? 'bg-sky-600 text-white'
+                            : 'bg-emerald-700 text-white'
                           : 'text-slate-400 hover:text-slate-200'
                       }`}
                     >
-                      {item.label}
+                      {item.mode === WeatherMode.Live && <CloudSun className="w-3 h-3 shrink-0" />}
+                      <span>{item.label}</span>
                     </button>
                   ))}
+                  {weatherMode === WeatherMode.Live && (
+                    <button
+                      type="button"
+                      onClick={onSyncGeoWeather}
+                      disabled={liveWeatherLoading}
+                      title="現在地の天気に合わせる"
+                      className="px-1.5 py-1 rounded bg-sky-800/90 hover:bg-sky-700 disabled:opacity-50 text-sky-100 text-[11px] font-medium flex items-center gap-0.5 transition-colors whitespace-nowrap"
+                    >
+                      <MapPin className="w-3 h-3" />
+                      <span>現在地</span>
+                    </button>
+                  )}
                 </div>
 
                 {/* Camera Mode */}
@@ -944,13 +1012,21 @@ export const HudOverlay: React.FC<HudOverlayProps> = ({
             </div>
 
             <div className="mt-2 flex items-center justify-between text-[10px] text-slate-400 tabular-nums">
-              <span>RPM {Math.round(telemetry.rpm)}</span>
-              <span>最高記録 {Math.round(telemetry.maxSpeedKmh)} km/h</span>
+              <span>{isEv ? `MOTOR ${Math.round(telemetry.rpm)}` : `RPM ${Math.round(telemetry.rpm)}`}</span>
+              <span>
+                {isEv ? 'EV' : isBike ? 'BIKE' : 'GT'} · 最高 {Math.round(telemetry.maxSpeedKmh)} km/h
+              </span>
             </div>
             <div className="mt-1 h-2 w-full rounded bg-slate-800 overflow-hidden flex">
               <div
                 className={`h-full transition-all duration-75 ${
-                  rpmPct > 86 ? 'bg-red-500' : rpmPct > 65 ? 'bg-amber-400' : 'bg-emerald-400'
+                  isEv
+                    ? 'bg-cyan-400'
+                    : rpmPct > 86
+                      ? 'bg-red-500'
+                      : rpmPct > 65
+                        ? 'bg-amber-400'
+                        : 'bg-emerald-400'
                 }`}
                 style={{ width: `${rpmPct}%` }}
               />

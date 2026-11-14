@@ -6,6 +6,8 @@ import { OfflineIndicator } from './components/OfflineIndicator';
 import { StartModal } from './components/StartModal';
 import { TitleScreen } from './components/TitleScreen';
 import { HighwayEngine } from './game/HighwayEngine';
+import { WEATHER_CONFIG } from './game/constants';
+import { fetchRealWeather } from './game/liveWeather';
 import {
   ActiveWeather,
   CameraMode,
@@ -13,10 +15,12 @@ import {
   DeviceMode,
   IcClearSummary,
   InputState,
+  LiveWeatherInfo,
   QualityMode,
   SafetyBannerMessage,
   TelemetrySnapshot,
   TrafficDensity,
+  VehicleType,
   WeatherMode,
 } from './types/game';
 
@@ -74,6 +78,7 @@ async function releaseAppFullscreen(): Promise<void> {
 }
 
 const INITIAL_TELEMETRY: TelemetrySnapshot = {
+  vehicleType: 'car',
   speedKmh: 120,
   rpm: 4100,
   gear: 4,
@@ -103,10 +108,13 @@ const INITIAL_TELEMETRY: TelemetrySnapshot = {
   nextMilestoneDistM: 860,
   nextMilestoneFeature: '東名接続高架ジャンクション',
   inSaApron: false,
+  inFreePlaza: false,
   activeFacilityKind: null,
   inMergeLane: false,
   inIcRamp: false,
   inJctRamp: false,
+  inJctBranch: false,
+  jctBranchRemainingM: 0,
   inParkingBay: false,
   isParked: false,
 };
@@ -117,15 +125,20 @@ export default function App() {
 
   const [recommendedDevice] = useState<DeviceMode>(detectRecommendedDevice);
   const [deviceMode, setDeviceMode] = useState<DeviceMode>(recommendedDevice);
+  const [vehicleType, setVehicleType] = useState<VehicleType>('car');
   const [showTitle, setShowTitle] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [hasStartedOnce, setHasStartedOnce] = useState(false);
   const [showLegalGuide, setShowLegalGuide] = useState(false);
   const [icClearSummary, setIcClearSummary] = useState<IcClearSummary | null>(null);
   const [contextLost, setContextLost] = useState(false);
+  const [webglUnsupported, setWebglUnsupported] = useState(false);
   const [gyroEnabled, setGyroEnabled] = useState(false);
 
   const [weatherMode, setWeatherMode] = useState<WeatherMode>(WeatherMode.Auto);
+  const [liveWeather, setLiveWeather] = useState<LiveWeatherInfo | null>(null);
+  const [liveWeatherLoading, setLiveWeatherLoading] = useState(false);
+  const [livePreferGeo, setLivePreferGeo] = useState(false);
   const [cameraMode, setCameraMode] = useState<CameraMode>(CameraMode.Chase);
   const [trafficDensity, setTrafficDensity] = useState<TrafficDensity>(TrafficDensity.Realistic);
   const [qualityMode, setQualityMode] = useState<QualityMode>(QualityMode.Ultra);
@@ -139,7 +152,7 @@ export default function App() {
   const [banner, setBanner] = useState<SafetyBannerMessage | null>({
     id: 0,
     title: '【新東名 300km/h 特例区間】',
-    body: '他車は現実の新東名基準（乗用車120km/h・大型車80〜90km/h）で走行中。現実では法定速度を守りましょう！',
+    body: '他車は現実の高速基準（乗用車100〜120km/h・大型貨物90km/h）で走行中。現実では法定速度を守りましょう！',
     tone: 'info',
   });
 
@@ -157,14 +170,28 @@ export default function App() {
     const container = mountRef.current;
     if (!container) return;
 
-    const engine = new HighwayEngine(container, {
-      onTelemetry: (snap) => setTelemetry(snap),
-      onSafetyBanner: pushBanner,
-      onIcExitClear: (summary) => setIcClearSummary(summary),
-      onContextLost: () => setContextLost(true),
-    });
+    const probeCanvas = document.createElement('canvas');
+    const gl2 = probeCanvas.getContext('webgl2');
+    if (!gl2) {
+      setWebglUnsupported(true);
+      return;
+    }
+
+    let engine: HighwayEngine;
+    try {
+      engine = new HighwayEngine(container, {
+        onTelemetry: (snap) => setTelemetry(snap),
+        onSafetyBanner: pushBanner,
+        onIcExitClear: (summary) => setIcClearSummary(summary),
+        onContextLost: () => setContextLost(true),
+      });
+    } catch {
+      setWebglUnsupported(true);
+      return;
+    }
 
     engine.setDeviceMode(recommendedDevice);
+    engine.setAttractMode(true);
     engineRef.current = engine;
 
     return () => {
@@ -228,6 +255,7 @@ export default function App() {
       setShowTitle(false);
       setIsModalOpen(false);
       setHasStartedOnce(true);
+      engineRef.current?.setAttractMode(false);
       engineRef.current?.setRunning(true);
     },
     [handleChangeDeviceMode],
@@ -238,6 +266,7 @@ export default function App() {
       handleChangeDeviceMode(mode);
       setShowTitle(false);
       setIsModalOpen(true);
+      engineRef.current?.setAttractMode(true);
       engineRef.current?.setRunning(false);
     },
     [handleChangeDeviceMode],
@@ -245,7 +274,10 @@ export default function App() {
 
   const handleReturnToTitle = useCallback(() => {
     engineRef.current?.setRunning(false);
+    engineRef.current?.resetRun();
+    engineRef.current?.setAttractMode(true);
     clearInputs();
+    setHasStartedOnce(false);
     setIcClearSummary(null);
     setIsModalOpen(false);
     setCinemaHudHidden(false);
@@ -257,6 +289,7 @@ export default function App() {
     engineRef.current?.unlockAudio();
     setIsModalOpen(false);
     setHasStartedOnce(true);
+    engineRef.current?.setAttractMode(false);
     engineRef.current?.setRunning(true);
   }, []);
 
@@ -267,6 +300,7 @@ export default function App() {
     setCinemaHudHidden(true);
     setIsModalOpen(false);
     setHasStartedOnce(true);
+    engineRef.current?.setAttractMode(false);
     engineRef.current?.setRunning(true);
     await requestAppFullscreen(deviceMode === 'mobile');
   }, [deviceMode]);
@@ -295,6 +329,7 @@ export default function App() {
     engineRef.current?.unlockAudio();
     clearInputs();
     engineRef.current?.resetRun();
+    engineRef.current?.setAttractMode(false);
     setIcClearSummary(null);
     setIsModalOpen(false);
     setHasStartedOnce(true);
@@ -306,10 +341,65 @@ export default function App() {
     engineRef.current?.resumeAfterIcClear();
   }, []);
 
-  const handleSelectWeather = useCallback((mode: WeatherMode) => {
-    setWeatherMode(mode);
-    engineRef.current?.setWeatherMode(mode);
+  const handleExitJctBranch = useCallback(() => {
+    engineRef.current?.exitJctBranchToMainline();
+    setIsModalOpen(false);
+    engineRef.current?.setRunning(true);
   }, []);
+
+  const handleSelectVehicleType = useCallback((vt: VehicleType) => {
+    setVehicleType(vt);
+    engineRef.current?.setVehicleType(vt);
+  }, []);
+
+  const syncLiveWeather = useCallback(
+    async (preferGeo: boolean, announce: boolean) => {
+      setLiveWeatherLoading(true);
+      try {
+        const info = await fetchRealWeather(preferGeo);
+        setLiveWeather(info);
+        setLivePreferGeo(info.source === 'geolocation');
+        engineRef.current?.setLiveWeatherTarget(info.mappedWeather);
+        if (announce) {
+          const mappedLabel = WEATHER_CONFIG[info.mappedWeather].shortJa;
+          pushBanner({
+            id: Date.now(),
+            title: `【現実天気連動】${info.locationLabel}：${info.weatherLabelJa} (${Math.round(info.temperatureC)}℃)`,
+            body: `現在の実際の天気・時間帯に合わせて「${mappedLabel}」モードを反映しました。`,
+            tone: 'info',
+          });
+        }
+      } finally {
+        setLiveWeatherLoading(false);
+      }
+    },
+    [pushBanner],
+  );
+
+  useEffect(() => {
+    if (weatherMode !== WeatherMode.Live) return;
+    const timer = window.setInterval(() => {
+      void syncLiveWeather(livePreferGeo, false);
+    }, 300_000);
+    return () => window.clearInterval(timer);
+  }, [weatherMode, livePreferGeo, syncLiveWeather]);
+
+  const handleSelectWeather = useCallback(
+    (mode: WeatherMode) => {
+      setWeatherMode(mode);
+      engineRef.current?.setWeatherMode(mode);
+      if (mode === WeatherMode.Live) {
+        void syncLiveWeather(livePreferGeo, true);
+      }
+    },
+    [livePreferGeo, syncLiveWeather],
+  );
+
+  const handleSyncGeoWeather = useCallback(() => {
+    setWeatherMode(WeatherMode.Live);
+    engineRef.current?.setWeatherMode(WeatherMode.Live);
+    void syncLiveWeather(true, true);
+  }, [syncLiveWeather]);
 
   const handleSelectCamera = useCallback((mode: CameraMode) => {
     setCameraMode(mode);
@@ -544,17 +634,23 @@ export default function App() {
 
       <OfflineIndicator />
 
-      {contextLost && (
+      {(webglUnsupported || contextLost) && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#070b12] text-slate-200 p-6">
-          <div className="max-w-md text-center space-y-3">
-            <h2 className="text-lg font-bold">WebGL描画コンテキストが中断されました</h2>
-            <p className="text-sm text-slate-400">
-              ページを再読み込みすると新東名3Dハイウェイが再開されます。
+          <div className="max-w-md w-full rounded-2xl bg-[#0e1624] border border-slate-700/80 p-6 text-center space-y-3 shadow-2xl">
+            <h2 className="text-lg font-bold text-white">
+              {webglUnsupported
+                ? 'WebGL2非対応のブラウザです'
+                : 'WebGL描画コンテキストが中断されました'}
+            </h2>
+            <p className="text-sm text-slate-300 leading-relaxed">
+              {webglUnsupported
+                ? 'この3DハイウェイシミュレーターはWebGL2が必要です。Chrome / Safari / Edge 最新版、またはハードウェアアクセラレーションが有効な環境でご利用ください。'
+                : 'ページを再読み込みすると新東名3Dハイウェイが再開されます。'}
             </p>
             <button
               type="button"
               onClick={() => window.location.reload()}
-              className="px-4 py-2 rounded-lg bg-amber-500 text-slate-950 font-bold text-sm"
+              className="px-5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-sm transition-colors"
             >
               再読み込み
             </button>
@@ -565,10 +661,17 @@ export default function App() {
       {showTitle && !showLegalGuide && (
         <TitleScreen
           recommendedDevice={recommendedDevice}
+          vehicleType={vehicleType}
           paint={paint}
           qualityMode={qualityMode}
+          weatherMode={weatherMode}
+          liveWeather={liveWeather}
+          liveWeatherLoading={liveWeatherLoading}
+          onSelectVehicleType={handleSelectVehicleType}
           onSelectPaint={handleSelectPaint}
           onSelectQuality={handleSelectQuality}
+          onSelectWeather={handleSelectWeather}
+          onSyncGeoWeather={handleSyncGeoWeather}
           onStartDevice={handleStartFromTitle}
           onOpenGarage={handleOpenGarageFromTitle}
           onShowLegalGuide={() => setShowLegalGuide(true)}
@@ -583,6 +686,8 @@ export default function App() {
           gyroEnabled={gyroEnabled}
           banner={banner}
           weatherMode={weatherMode}
+          liveWeather={liveWeather}
+          liveWeatherLoading={liveWeatherLoading}
           cameraMode={cameraMode}
           trafficDensity={trafficDensity}
           qualityMode={qualityMode}
@@ -596,6 +701,7 @@ export default function App() {
           onToggleCinemaHud={handleToggleCinemaHud}
           onToggleGyro={handleToggleGyro}
           onSelectWeather={handleSelectWeather}
+          onSyncGeoWeather={handleSyncGeoWeather}
           onSelectCamera={handleSelectCamera}
           onSelectTraffic={handleSelectTraffic}
           onSelectQuality={handleSelectQuality}
@@ -603,6 +709,7 @@ export default function App() {
           onToggleMute={handleToggleMute}
           onPause={handlePause}
           onRestart={handleRestart}
+          onExitJctBranch={handleExitJctBranch}
           onTouchInput={handleTouchInput}
           onShowLegalGuide={() => {
             engineRef.current?.setRunning(false);
@@ -615,19 +722,26 @@ export default function App() {
         isOpen={!showTitle && isModalOpen && !showLegalGuide && !icClearSummary}
         hasStartedOnce={hasStartedOnce}
         deviceMode={deviceMode}
+        vehicleType={vehicleType}
+        inJctBranch={telemetry.inJctBranch}
         paint={paint}
         weatherMode={weatherMode}
+        liveWeather={liveWeather}
+        liveWeatherLoading={liveWeatherLoading}
         trafficDensity={trafficDensity}
         qualityMode={qualityMode}
         onChangeDeviceMode={handleChangeDeviceMode}
+        onSelectVehicleType={handleSelectVehicleType}
         onSelectPaint={handleSelectPaint}
         onSelectWeather={handleSelectWeather}
+        onSyncGeoWeather={handleSyncGeoWeather}
         onSelectTraffic={handleSelectTraffic}
         onSelectQuality={handleSelectQuality}
         onStartOrResume={handleStartOrResume}
         onStartFullscreenUltra={handleStartFullscreenUltra}
         onRestart={handleRestart}
         onReturnToTitle={handleReturnToTitle}
+        onExitJctBranch={handleExitJctBranch}
       />
 
       <IcClearModal

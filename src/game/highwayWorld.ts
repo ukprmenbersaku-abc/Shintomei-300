@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import {
   EXPRESSWAY,
   FacilityStyleId,
+  JCT_BRANCH_LENGTH_M,
   PARKING_BAY_COORDS,
   ROUTE_LOOP_LENGTH_M,
   RouteMilestone,
@@ -12,6 +13,7 @@ import {
   createGoreNoseAssembly,
   createHamamatsuSaComplex,
   createIcExitComplex,
+  createJctBranchEndGate,
   createJctOverpass,
   createJctRampCurve,
   createKakegawaPaComplex,
@@ -22,11 +24,27 @@ import {
 } from './models';
 import {
   ProceduralTexturePack,
+  updateGantrySignForJctBranch,
   updateGantrySignForMilestone,
   updateLedBoardCanvas,
 } from './textures';
 
+let activeJctBranchMilestone: RouteMilestone | null = null;
+let activeJctBranchSeed = 0;
+
+export function getActiveJctBranch(): RouteMilestone | null {
+  return activeJctBranchMilestone;
+}
+
 export function roadCenterX(s: number): number {
+  if (activeJctBranchMilestone) {
+    return (
+      52 * Math.sin(s * 0.0018 + activeJctBranchSeed) +
+      24 * Math.cos(s * 0.00088 + activeJctBranchSeed * 0.5) -
+      52 * Math.sin(activeJctBranchSeed) -
+      24 * Math.cos(activeJctBranchSeed * 0.5)
+    );
+  }
   return (
     46 * Math.sin(s * 0.00165) +
     28 * Math.cos(s * 0.00072) +
@@ -36,6 +54,12 @@ export function roadCenterX(s: number): number {
 }
 
 export function roadCenterDX(s: number): number {
+  if (activeJctBranchMilestone) {
+    return (
+      52 * 0.0018 * Math.cos(s * 0.0018 + activeJctBranchSeed) -
+      24 * 0.00088 * Math.sin(s * 0.00088 + activeJctBranchSeed * 0.5)
+    );
+  }
   return (
     46 * 0.00165 * Math.cos(s * 0.00165) -
     28 * 0.00072 * Math.sin(s * 0.00072) +
@@ -44,10 +68,16 @@ export function roadCenterDX(s: number): number {
 }
 
 export function roadElevationY(s: number): number {
+  if (activeJctBranchMilestone) {
+    return 9.5 * Math.sin(s * 0.0014) + 3.8 * Math.cos(s * 0.0031) - 3.8;
+  }
   return 11 * Math.sin(s * 0.0013) + 4.5 * Math.cos(s * 0.0029) - 4.5;
 }
 
 export function roadElevationDY(s: number): number {
+  if (activeJctBranchMilestone) {
+    return 9.5 * 0.0014 * Math.cos(s * 0.0014) - 3.8 * 0.0031 * Math.sin(s * 0.0031);
+  }
   return 11 * 0.0013 * Math.cos(s * 0.0013) - 4.5 * 0.0029 * Math.sin(s * 0.0029);
 }
 
@@ -68,6 +98,7 @@ export function getMilestoneNear(
   halfSpan: number,
   typeFilter?: 'sa' | 'pa' | 'jct' | 'ic',
 ): { milestone: RouteMilestone; ds: number; worldS: number } | null {
+  if (activeJctBranchMilestone) return null;
   for (const m of SHIN_TOMEI_ROUTE) {
     if (typeFilter && m.type !== typeFilter) continue;
     const ds = signedLoopDelta(s, m.sPos);
@@ -132,7 +163,7 @@ const EMPTY_PROFILE: FacilityProfile = {
 };
 
 export function getFacilityProfileAt(s: number): FacilityProfile {
-  const hit = getMilestoneNear(s, 400);
+  const hit = getMilestoneNear(s, 460);
   if (!hit) return EMPTY_PROFILE;
   const { milestone: m, ds, worldS } = hit;
   const EDGE = EXPRESSWAY.ROAD_LEFT_EDGE; // -8.375
@@ -141,7 +172,7 @@ export function getFacilityProfileAt(s: number): FacilityProfile {
   const plateauBaseY = roadElevationY(worldS);
 
   if (m.type === 'sa') {
-    if (ds < -340 || ds > 380) return EMPTY_PROFILE;
+    if (ds < -340 || ds > 440) return EMPTY_PROFILE;
 
     let outerX = EDGE;
     let innerX = LANE0_LEFT;
@@ -185,43 +216,37 @@ export function getFacilityProfileAt(s: number): FacilityProfile {
       hasIsland = true;
       islandLeftX = innerX;
       isPlaza = true;
-    } else if (ds <= 185) {
-      // Single uninterrupted exit S-curve back toward merge gore & parallel accel lane
-      outerX = THREE.MathUtils.lerp(-46.0, -12.4, smoothstep(80, 215, ds));
-      innerX = THREE.MathUtils.lerp(-17.5, -10.875, smoothstep(80, 185, ds));
+    } else if (ds <= 195) {
+      // Single uninterrupted exit S-curve back toward merge gore & long parallel accel lane
+      outerX = THREE.MathUtils.lerp(-46.0, -12.4, smoothstep(80, 225, ds));
+      innerX = THREE.MathUtils.lerp(-17.5, -10.875, smoothstep(80, 195, ds));
       hasIsland = true;
       islandLeftX = innerX;
-    } else if (ds <= 215) {
+    } else if (ds <= 228) {
       // Merge gore wedge narrowing flush to mainline shoulder, outerX finishes same smooth curve
-      outerX = THREE.MathUtils.lerp(-46.0, -12.4, smoothstep(80, 215, ds));
-      const gt = 1 - smoothstep(185, 220, ds);
+      outerX = THREE.MathUtils.lerp(-46.0, -12.4, smoothstep(80, 225, ds));
+      const gt = 1 - smoothstep(195, 228, ds);
       goreRightX = EDGE;
       goreLeftX = EDGE - gt * 2.5;
-      innerX = THREE.MathUtils.lerp(goreLeftX, LANE0_LEFT, smoothstep(200, 220, ds));
-      hasGuide = ds >= 210;
+      innerX = THREE.MathUtils.lerp(goreLeftX, LANE0_LEFT, smoothstep(208, 228, ds));
+      hasGuide = ds >= 218;
       isMergeLane = true;
-    } else if (ds <= 300) {
-      // Straight parallel acceleration lane for confident 120km/h merging
+    } else if (ds <= 355) {
+      // Long straight parallel acceleration lane for confident 120km/h+ merging
       outerX = -12.4;
       innerX = LANE0_LEFT;
-      if (ds <= 220) {
-        const gt = 1 - smoothstep(185, 220, ds);
-        goreRightX = EDGE;
-        goreLeftX = EDGE - gt * 2.5;
-        innerX = THREE.MathUtils.lerp(goreLeftX, LANE0_LEFT, smoothstep(200, 220, ds));
-      }
       hasGuide = true;
       isMergeLane = true;
     } else {
       // Clean acceleration lane merge taper back into mainline
-      outerX = THREE.MathUtils.lerp(-12.4, EDGE, smoothstep(300, 380, ds));
-      innerX = THREE.MathUtils.lerp(LANE0_LEFT, EDGE, smoothstep(358, 380, ds));
-      hasGuide = ds <= 372;
+      outerX = THREE.MathUtils.lerp(-12.4, EDGE, smoothstep(355, 440, ds));
+      innerX = THREE.MathUtils.lerp(LANE0_LEFT, EDGE, smoothstep(418, 440, ds));
+      hasGuide = ds <= 432;
       isMergeLane = true;
     }
 
     // Climb/descend ONLY inside the separated island span so diverge/merge gores sit flush at mainY!
-    const rampBlend = Math.min(smoothstep(-158, -76, ds), 1 - smoothstep(76, 178, ds));
+    const rampBlend = Math.min(smoothstep(-158, -76, ds), 1 - smoothstep(76, 188, ds));
     const facilityY = THREE.MathUtils.lerp(mainY, plateauBaseY + 2.2, rampBlend);
 
     return {
@@ -243,7 +268,7 @@ export function getFacilityProfileAt(s: number): FacilityProfile {
   }
 
   if (m.type === 'pa') {
-    if (ds < -270 || ds > 300) return EMPTY_PROFILE;
+    if (ds < -270 || ds > 350) return EMPTY_PROFILE;
 
     let outerX = EDGE;
     let innerX = LANE0_LEFT;
@@ -282,32 +307,32 @@ export function getFacilityProfileAt(s: number): FacilityProfile {
       hasIsland = true;
       islandLeftX = innerX;
       isPlaza = true;
-    } else if (ds <= 145) {
-      outerX = THREE.MathUtils.lerp(-33.0, -12.2, smoothstep(60, 175, ds));
-      innerX = THREE.MathUtils.lerp(-14.5, -10.575, smoothstep(60, 145, ds));
+    } else if (ds <= 155) {
+      outerX = THREE.MathUtils.lerp(-33.0, -12.2, smoothstep(60, 185, ds));
+      innerX = THREE.MathUtils.lerp(-14.5, -10.575, smoothstep(60, 155, ds));
       hasIsland = true;
       islandLeftX = innerX;
-    } else if (ds <= 178) {
-      outerX = THREE.MathUtils.lerp(-33.0, -12.2, smoothstep(60, 175, ds));
-      const gt = 1 - smoothstep(145, 178, ds);
+    } else if (ds <= 188) {
+      outerX = THREE.MathUtils.lerp(-33.0, -12.2, smoothstep(60, 185, ds));
+      const gt = 1 - smoothstep(155, 188, ds);
       goreRightX = EDGE;
       goreLeftX = EDGE - gt * 2.2;
-      innerX = THREE.MathUtils.lerp(goreLeftX, LANE0_LEFT, smoothstep(160, 178, ds));
-      hasGuide = ds >= 170;
+      innerX = THREE.MathUtils.lerp(goreLeftX, LANE0_LEFT, smoothstep(170, 188, ds));
+      hasGuide = ds >= 178;
       isMergeLane = true;
-    } else if (ds <= 240) {
+    } else if (ds <= 280) {
       outerX = -12.2;
       innerX = LANE0_LEFT;
       hasGuide = true;
       isMergeLane = true;
     } else {
-      outerX = THREE.MathUtils.lerp(-12.2, EDGE, smoothstep(240, 300, ds));
-      innerX = THREE.MathUtils.lerp(LANE0_LEFT, EDGE, smoothstep(280, 300, ds));
-      hasGuide = ds <= 292;
+      outerX = THREE.MathUtils.lerp(-12.2, EDGE, smoothstep(280, 350, ds));
+      innerX = THREE.MathUtils.lerp(LANE0_LEFT, EDGE, smoothstep(328, 350, ds));
+      hasGuide = ds <= 342;
       isMergeLane = true;
     }
 
-    const rampBlend = Math.min(smoothstep(-130, -56, ds), 1 - smoothstep(56, 138, ds));
+    const rampBlend = Math.min(smoothstep(-130, -56, ds), 1 - smoothstep(56, 148, ds));
     const facilityY = THREE.MathUtils.lerp(mainY, plateauBaseY + 1.2, rampBlend);
 
     return {
@@ -725,9 +750,12 @@ export function getOffMainlineBounds(
 }
 
 export function isTunnelAt(s: number): boolean {
+  if (activeJctBranchMilestone) {
+    return (s >= 1350 && s < 1830) || (s >= 3350 && s < 3830);
+  }
   if (s < 650) return false;
   // Never spawn tunnels over JCT, IC, PA, or SA approaches
-  if (getMilestoneNear(s, 420)) return false;
+  if (getMilestoneNear(s, 460)) return false;
   const mod = ((s % EXPRESSWAY.TUNNEL_INTERVAL_M) + EXPRESSWAY.TUNNEL_INTERVAL_M) % EXPRESSWAY.TUNNEL_INTERVAL_M;
   return mod >= 1300 && mod < 1300 + EXPRESSWAY.TUNNEL_LENGTH_M;
 }
@@ -790,7 +818,7 @@ export class HighwayWorld {
   private guardrailLeftGeo: THREE.BufferGeometry;
   private guardrailRightGeo: THREE.BufferGeometry;
 
-  private roadMaterial: THREE.MeshStandardMaterial;
+  private roadMaterial: THREE.MeshPhysicalMaterial;
   private terrainMaterial: THREE.MeshStandardMaterial;
 
   // Tunnel arch pool
@@ -799,6 +827,7 @@ export class HighwayWorld {
 
   // Bespoke Milestone Complexes (each SA, PA, IC, JCT has its own real-world architecture)
   private facilityMap = new Map<FacilityStyleId, THREE.Group>();
+  private jctEndGate: THREE.Group;
   private divergeGorePool: THREE.Group[] = [];
   private mergeGorePool: THREE.Group[] = [];
 
@@ -834,11 +863,17 @@ export class HighwayWorld {
 
   private isSoftwareGl: boolean;
   private tunnelLights: THREE.PointLight[] = [];
+  private lampLights: THREE.PointLight[] = [];
   private sprayPoints: THREE.Points;
   private sprayMat: THREE.PointsMaterial;
   private sprayPositions: Float32Array;
   private sprayAges: Float32Array;
   private readonly sprayCount = 140;
+
+  private windLines: THREE.LineSegments;
+  private windMat: THREE.LineBasicMaterial;
+  private windPositions: Float32Array;
+  private readonly windCount = 84;
 
   private lastBaseSeg = Number.NaN;
   private ledMessageTimer = 0;
@@ -866,6 +901,8 @@ export class HighwayWorld {
         uSunDir: { value: new THREE.Vector3(0.25, 0.45, -0.85).normalize() },
         uStarIntensity: { value: 0.0 },
         uCloudOpacity: { value: 0.35 },
+        uRainAmount: { value: 0.0 },
+        uUltraDetail: { value: 1.0 },
         uTime: { value: 0.0 },
       },
       vertexShader: `
@@ -883,6 +920,8 @@ export class HighwayWorld {
         uniform vec3 uSunDir;
         uniform float uStarIntensity;
         uniform float uCloudOpacity;
+        uniform float uRainAmount;
+        uniform float uUltraDetail;
         uniform float uTime;
         varying vec3 vWorldDir;
 
@@ -899,34 +938,92 @@ export class HighwayWorld {
             u.y
           );
         }
+        float fbm4(vec2 p) {
+          float v = 0.0;
+          float a = 0.5;
+          mat2 rot = mat2(0.8, 0.6, -0.6, 0.8);
+          for (int i = 0; i < 4; i++) {
+            v += a * noise(p);
+            p = rot * p * 2.05;
+            a *= 0.5;
+          }
+          return v;
+        }
 
         void main() {
           vec3 dir = normalize(vWorldDir);
+          vec3 sDir = normalize(uSunDir);
           float h = clamp(dir.y, 0.0, 1.0);
-          vec3 col = mix(uHorizonColor, uZenithColor, pow(h, 0.58));
+          vec3 col = mix(uHorizonColor, uZenithColor, pow(h, 0.56));
 
           if (dir.y < 0.0) {
             col = mix(uHorizonColor, uGroundColor, smoothstep(0.0, -0.14, dir.y));
           }
 
-          float sunAmt = max(dot(dir, normalize(uSunDir)), 0.0);
-          col += uSunColor * pow(sunAmt, 14.0) * 0.28 * smoothstep(-0.04, 0.05, dir.y);
-          col += uSunColor * smoothstep(0.9986, 0.9997, sunAmt) * 1.15 * smoothstep(-0.02, 0.02, dir.y);
-
-          if (dir.y > 0.03 && uCloudOpacity > 0.01) {
-            vec2 cloudUv = dir.xz / (dir.y + 0.16) * 1.3 + vec2(uTime * 0.008, uTime * 0.003);
-            float n = noise(cloudUv * 2.2) * 0.6 + noise(cloudUv * 5.0) * 0.4;
-            float cloudMask = smoothstep(0.52, 0.85, n) * smoothstep(0.03, 0.25, dir.y);
-            vec3 cloudCol = mix(uHorizonColor * 1.1, vec3(0.95), 0.32);
-            col = mix(col, cloudCol, cloudMask * uCloudOpacity);
+          float sunAmt = max(dot(dir, sDir), 0.0);
+          float horizonVis = smoothstep(-0.04, 0.05, dir.y);
+          // Atmospheric Mie scatter & sun disc
+          if (uUltraDetail > 0.5) {
+            float mie = pow(sunAmt, 6.0) * 0.24 + pow(sunAmt, 36.0) * 0.42;
+            col += uSunColor * mie * horizonVis * (1.0 - uRainAmount * 0.72);
+            col += uSunColor * smoothstep(0.9985, 0.9997, sunAmt) * 1.45 * smoothstep(-0.02, 0.02, dir.y) * (1.0 - uRainAmount * 0.85);
+            // Warm horizon band near sun azimuth
+            float horizGlow = exp(-abs(dir.y) * 9.0) * (0.25 + 0.75 * pow(sunAmt, 3.0));
+            col += uSunColor * horizGlow * 0.16 * (1.0 - uRainAmount * 0.75);
+          } else {
+            col += uSunColor * pow(sunAmt, 14.0) * 0.28 * horizonVis;
+            col += uSunColor * smoothstep(0.9986, 0.9997, sunAmt) * 1.15 * smoothstep(-0.02, 0.02, dir.y);
           }
 
-          if (uStarIntensity > 0.01 && dir.y > 0.05) {
-            vec2 starUv = floor(dir.xz / (dir.y + 0.35) * 140.0);
-            float s = hash(starUv);
-            if (s > 0.992) {
-              float twinkle = 0.6 + 0.4 * sin(uTime * 2.5 + s * 100.0);
-              col += vec3(0.9, 0.95, 1.0) * uStarIntensity * twinkle * smoothstep(0.05, 0.35, dir.y);
+          if (dir.y > 0.02 && uCloudOpacity > 0.01) {
+            vec2 cloudUv = dir.xz / (dir.y + 0.14) * 1.18 + vec2(uTime * 0.0085, uTime * 0.0032);
+            if (uUltraDetail > 0.5) {
+              float baseCloud = fbm4(cloudUv * 1.9);
+              float detailCloud = fbm4(cloudUv * 4.3 + vec2(3.1, 1.7));
+              float density = mix(baseCloud, detailCloud, 0.35) + uRainAmount * 0.18;
+              float cloudMask = smoothstep(0.46 - uRainAmount * 0.1, 0.82, density) * smoothstep(0.02, 0.24, dir.y);
+              // Sunlit silver/golden cloud rim lighting vs deep cloud underside
+              float sunRim = smoothstep(0.42, 0.75, density) * (0.35 + 0.65 * pow(sunAmt, 3.0));
+              vec3 cloudBase = mix(uHorizonColor * 0.72, vec3(0.28, 0.33, 0.4), uRainAmount * 0.7);
+              vec3 cloudLit = mix(vec3(0.96), uSunColor * 1.15, 0.48);
+              vec3 cloudCol = mix(cloudBase, cloudLit, clamp(sunRim * (1.0 - uRainAmount * 0.55) + 0.22, 0.0, 1.0));
+              col = mix(col, cloudCol, cloudMask * clamp(uCloudOpacity + uRainAmount * 0.35, 0.0, 0.85));
+            } else {
+              float n = noise(cloudUv * 2.2) * 0.6 + noise(cloudUv * 5.0) * 0.4;
+              float cloudMask = smoothstep(0.52, 0.85, n) * smoothstep(0.03, 0.25, dir.y);
+              vec3 cloudCol = mix(uHorizonColor * 1.1, vec3(0.95), 0.32);
+              col = mix(col, cloudCol, cloudMask * uCloudOpacity);
+            }
+          }
+
+          if (uStarIntensity > 0.01 && dir.y > 0.04) {
+            if (uUltraDetail > 0.5) {
+              // Subtle Milky Way diagonal dust band
+              float mwBand = exp(-pow((dir.x * 0.75 + dir.z * 0.65 - 0.15) * 3.8, 2.0));
+              float mwNoise = fbm4(dir.xz * 4.2 + dir.y * 2.0);
+              col += vec3(0.14, 0.19, 0.32) * mwBand * mwNoise * uStarIntensity * smoothstep(0.06, 0.45, dir.y);
+
+              // Multi-tier twinkling starfield
+              vec2 starUv1 = floor(dir.xz / (dir.y + 0.35) * 160.0);
+              float s1 = hash(starUv1);
+              if (s1 > 0.991) {
+                float twinkle = 0.55 + 0.45 * sin(uTime * 2.8 + s1 * 120.0);
+                vec3 tint = mix(vec3(0.85, 0.92, 1.0), vec3(1.0, 0.92, 0.8), fract(s1 * 57.0));
+                col += tint * uStarIntensity * twinkle * 1.25 * smoothstep(0.04, 0.32, dir.y);
+              }
+              vec2 starUv2 = floor(dir.xz / (dir.y + 0.25) * 310.0);
+              float s2 = hash(starUv2);
+              if (s2 > 0.9945) {
+                float twinkle2 = 0.6 + 0.4 * sin(uTime * 3.6 + s2 * 90.0);
+                col += vec3(0.75, 0.85, 1.0) * uStarIntensity * twinkle2 * 0.7 * smoothstep(0.08, 0.4, dir.y);
+              }
+            } else {
+              vec2 starUv = floor(dir.xz / (dir.y + 0.35) * 140.0);
+              float s = hash(starUv);
+              if (s > 0.992) {
+                float twinkle = 0.6 + 0.4 * sin(uTime * 2.5 + s * 100.0);
+                col += vec3(0.9, 0.95, 1.0) * uStarIntensity * twinkle * smoothstep(0.05, 0.35, dir.y);
+              }
             }
           }
 
@@ -938,8 +1035,8 @@ export class HighwayWorld {
     this.skyMesh.frustumCulled = false;
     scene.add(this.skyMesh);
 
-    // 1. Road Surface Materials (Natural matte-porous asphalt + micro-aggregate normal map)
-    this.roadMaterial = new THREE.MeshStandardMaterial({
+    // 1. Road Surface Materials (MeshPhysicalMaterial supports wet clearcoat rain mirror sheen in Ultra mode)
+    this.roadMaterial = new THREE.MeshPhysicalMaterial({
       map: textures.roadAlbedo,
       roughnessMap: textures.roadRoughness,
       normalMap: textures.roadNormalTexture,
@@ -947,6 +1044,8 @@ export class HighwayWorld {
       roughness: 0.9,
       metalness: 0.06,
       envMapIntensity: 0.14,
+      clearcoat: 0.0,
+      clearcoatRoughness: 0.12,
     });
 
     this.roadGeo = createRibbonGeometry(2);
@@ -1215,6 +1314,10 @@ export class HighwayWorld {
       this.mergeGorePool.push(mg);
     }
 
+    this.jctEndGate = createJctBranchEndGate(textures);
+    this.jctEndGate.visible = false;
+    scene.add(this.jctEndGate);
+
     // 7. Overhead Gantries
     for (let i = 0; i < 3; i++) {
       const gantry = createGantryStructure(textures, i, i % 2 === 0);
@@ -1466,6 +1569,57 @@ export class HighwayWorld {
     this.sprayPoints.frustumCulled = false;
     this.sprayPoints.visible = false;
     scene.add(this.sprayPoints);
+
+    // 21. Ultra-HD Pooled Expressway Streetlamp PointLights (glides warm overhead reflections across car clearcoat!)
+    for (let i = 0; i < 3; i++) {
+      const sLight = new THREE.PointLight(0xffdca8, 0, 44, 1.55);
+      scene.add(sLight);
+      this.lampLights.push(sLight);
+    }
+
+    // 22. Ultra-HD Aerodynamic High-Speed Wind Streak Lines (165km/h+)
+    this.windPositions = new Float32Array(this.windCount * 6);
+    for (let i = 0; i < this.windCount; i++) {
+      const side = i % 2 === 0 ? -1 : 1;
+      const wx = side * (1.5 + Math.random() * 6.5);
+      const wy = 0.35 + Math.random() * 3.4;
+      const wz = -Math.random() * 48;
+      const idx = i * 6;
+      this.windPositions[idx] = wx;
+      this.windPositions[idx + 1] = wy;
+      this.windPositions[idx + 2] = wz;
+      this.windPositions[idx + 3] = wx;
+      this.windPositions[idx + 4] = wy;
+      this.windPositions[idx + 5] = wz + 3.2;
+    }
+    const windGeo = new THREE.BufferGeometry();
+    windGeo.setAttribute('position', new THREE.BufferAttribute(this.windPositions, 3));
+    this.windMat = new THREE.LineBasicMaterial({
+      color: 0xe0f2fe,
+      transparent: true,
+      opacity: 0.0,
+      depthWrite: false,
+    });
+    this.windLines = new THREE.LineSegments(windGeo, this.windMat);
+    this.windLines.frustumCulled = false;
+    this.windLines.visible = false;
+    scene.add(this.windLines);
+  }
+
+  public setJctBranch(milestone: RouteMilestone | null): void {
+    activeJctBranchMilestone = milestone;
+    activeJctBranchSeed = milestone
+      ? milestone.id === 'isehara-jct'
+        ? 1.1
+        : milestone.id === 'shinshimizu-jct'
+          ? 2.4
+          : 3.7
+      : 0;
+    this.lastBaseSeg = Number.NaN;
+    for (const g of this.gantries) {
+      g.lastBucket = -1;
+      g.lastMilestoneId = '';
+    }
   }
 
   public update(
@@ -1498,24 +1652,41 @@ export class HighwayWorld {
       this.rebuildWorldRibbons(baseSeg);
     }
 
-    // Dynamically update gantry directional green signs as player approaches each JCT / NEOPASA / IC!
+    // Dynamically update gantry directional green signs as player approaches each JCT / NEOPASA / IC (or 5km JCT branch terminus)!
     for (let i = 0; i < this.gantries.length; i++) {
       const g = this.gantries[i];
       if (g.sPos > playerS - 10) {
-        const nextM = getNextMilestoneAhead(g.sPos);
-        const bucket = Math.max(0, Math.round(nextM.distM / 50));
-        if (g.lastMilestoneId !== nextM.milestone.id || g.lastBucket !== bucket) {
-          g.lastMilestoneId = nextM.milestone.id;
-          g.lastBucket = bucket;
-          updateGantrySignForMilestone(
-            this.textures.gantryCanvases[i % this.textures.gantryCanvases.length],
-            this.textures.gantrySigns[i % this.textures.gantrySigns.length],
-            nextM.milestone,
-            nextM.distM,
-          );
+        if (activeJctBranchMilestone) {
+          const remainingM = Math.max(0, JCT_BRANCH_LENGTH_M - g.sPos);
+          const bucket = Math.max(0, Math.round(remainingM / 50));
+          if (g.lastMilestoneId !== activeJctBranchMilestone.id || g.lastBucket !== bucket) {
+            g.lastMilestoneId = activeJctBranchMilestone.id;
+            g.lastBucket = bucket;
+            updateGantrySignForJctBranch(
+              this.textures.gantryCanvases[i % this.textures.gantryCanvases.length],
+              this.textures.gantrySigns[i % this.textures.gantrySigns.length],
+              activeJctBranchMilestone,
+              remainingM,
+            );
+          }
+        } else {
+          const nextM = getNextMilestoneAhead(g.sPos);
+          const bucket = Math.max(0, Math.round(nextM.distM / 50));
+          if (g.lastMilestoneId !== nextM.milestone.id || g.lastBucket !== bucket) {
+            g.lastMilestoneId = nextM.milestone.id;
+            g.lastBucket = bucket;
+            updateGantrySignForMilestone(
+              this.textures.gantryCanvases[i % this.textures.gantryCanvases.length],
+              this.textures.gantrySigns[i % this.textures.gantrySigns.length],
+              nextM.milestone,
+              nextM.distM,
+            );
+          }
         }
       }
     }
+
+    const useUltraFx = isUltra && !this.isSoftwareGl;
 
     // Update sky dome shader uniforms
     const curX = roadCenterX(playerS);
@@ -1530,16 +1701,26 @@ export class HighwayWorld {
     this.skyMat.uniforms.uSunDir.value.set(0.22, weatherParams.sunElevation, -0.88).normalize();
     this.skyMat.uniforms.uStarIntensity.value = weatherParams.starIntensity * (1 - weatherParams.tunnelBlend);
     this.skyMat.uniforms.uCloudOpacity.value = Math.max(0.12, 0.4 - weatherParams.starIntensity * 0.25);
+    this.skyMat.uniforms.uRainAmount.value = weatherParams.rainAmount;
+    this.skyMat.uniforms.uUltraDetail.value = useUltraFx ? 1.0 : 0.0;
     this.skyMat.uniforms.uTime.value = this.elapsedTime;
 
     this.groundFloorMesh.position.set(curX, -26, -playerS);
     this.mountainRingMesh.position.set(curX, -8, -playerS);
 
-    this.roadMaterial.roughness = weatherParams.asphaltRoughness;
-    this.roadMaterial.envMapIntensity = weatherParams.asphaltEnvIntensity;
+    if (useUltraFx) {
+      this.roadMaterial.clearcoat = Math.min(0.9, weatherParams.rainAmount * 0.92);
+      this.roadMaterial.clearcoatRoughness = 0.12;
+      this.roadMaterial.roughness = THREE.MathUtils.lerp(weatherParams.asphaltRoughness, 0.18, weatherParams.rainAmount * 0.65);
+      this.roadMaterial.envMapIntensity = THREE.MathUtils.lerp(weatherParams.asphaltEnvIntensity, 1.05, weatherParams.rainAmount);
+    } else {
+      this.roadMaterial.clearcoat = 0;
+      this.roadMaterial.roughness = weatherParams.asphaltRoughness;
+      this.roadMaterial.envMapIntensity = weatherParams.asphaltEnvIntensity;
+    }
 
     for (const lamp of this.lamps) {
-      lamp.bulbMat.emissiveIntensity = weatherParams.lampIntensity * 3.0;
+      lamp.bulbMat.emissiveIntensity = weatherParams.lampIntensity * (useUltraFx ? 4.2 : 3.0);
     }
 
     this.ledMessageTimer += dt;
@@ -1561,7 +1742,7 @@ export class HighwayWorld {
 
     if (weatherParams.rainAmount > 0.02 && !isTunnelAt(playerS)) {
       this.rainLines.visible = true;
-      this.rainMat.opacity = Math.min(0.58, weatherParams.rainAmount * 0.52);
+      this.rainMat.opacity = Math.min(useUltraFx ? 0.68 : 0.56, weatherParams.rainAmount * (useUltraFx ? 0.64 : 0.5));
       this.rainLines.position.set(roadCenterX(playerS), roadElevationY(playerS), -playerS);
 
       const posAttr = this.rainLines.geometry.attributes.position as THREE.BufferAttribute;
@@ -1584,7 +1765,6 @@ export class HighwayWorld {
     }
 
     // Ultra-HD Dynamic Tunnel Overhead PointLights
-    const useUltraFx = isUltra && !this.isSoftwareGl;
     const inTunnel = isTunnelAt(playerS);
     if (useUltraFx && (inTunnel || weatherParams.tunnelBlend > 0.08)) {
       const baseTunnelS = Math.floor(playerS / 20) * 20;
@@ -1593,7 +1773,7 @@ export class HighwayWorld {
         const tl = this.tunnelLights[i];
         if (isTunnelAt(ls)) {
           tl.position.set(roadCenterX(ls) - 0.6, roadElevationY(ls) + 8.1, -ls);
-          tl.intensity = 34 * Math.max(0.2, weatherParams.tunnelBlend);
+          tl.intensity = 38 * Math.max(0.2, weatherParams.tunnelBlend);
         } else {
           tl.intensity = 0;
         }
@@ -1602,10 +1782,58 @@ export class HighwayWorld {
       for (const tl of this.tunnelLights) tl.intensity = 0;
     }
 
+    // Ultra-HD Rolling Expressway Streetlamp PointLights (Night/Sunset/Rain)
+    if (useUltraFx && weatherParams.lampIntensity > 0.15 && !inTunnel) {
+      const baseLampS = Math.floor(playerS / 40) * 40;
+      for (let i = 0; i < this.lampLights.length; i++) {
+        const ls = baseLampS + i * 40;
+        const sl = this.lampLights[i];
+        if (!isTunnelAt(ls)) {
+          sl.position.set(roadCenterX(ls) + 4.4, roadElevationY(ls) + 8.6, -ls);
+          sl.intensity = 42 * weatherParams.lampIntensity * (1 - weatherParams.tunnelBlend);
+        } else {
+          sl.intensity = 0;
+        }
+      }
+    } else {
+      for (const sl of this.lampLights) sl.intensity = 0;
+    }
+
+    // Ultra-HD Aerodynamic High-Speed Wind Streaks (165km/h+)
+    const speedKmh = Math.abs(playerSpeedMs) * 3.6;
+    if (useUltraFx && speedKmh > 165 && dt > 0) {
+      const windAlpha = THREE.MathUtils.clamp((speedKmh - 165) / 135, 0, 1);
+      this.windLines.visible = true;
+      this.windMat.opacity = windAlpha * 0.28;
+      this.windLines.position.set(roadCenterX(playerS) + playerLaneOffset, getSurfaceElevationAt(playerS, playerLaneOffset), -playerS);
+
+      const posAttr = this.windLines.geometry.attributes.position as THREE.BufferAttribute;
+      const arr = posAttr.array as Float32Array;
+      const streakLen = 2.2 + windAlpha * 5.2;
+      const moveZ = Math.max(20, playerSpeedMs * 1.15) * dt;
+      for (let i = 0; i < this.windCount; i++) {
+        const idx = i * 6;
+        arr[idx + 2] += moveZ;
+        if (arr[idx + 2] > 10) {
+          const side = i % 2 === 0 ? -1 : 1;
+          arr[idx] = side * (1.4 + Math.random() * 6.8);
+          arr[idx + 1] = 0.35 + Math.random() * 3.2;
+          arr[idx + 2] = -48 - Math.random() * 18;
+        }
+        arr[idx + 3] = arr[idx];
+        arr[idx + 4] = arr[idx + 1];
+        arr[idx + 5] = arr[idx + 2] + streakLen;
+      }
+      posAttr.needsUpdate = true;
+    } else {
+      this.windLines.visible = false;
+    }
+
     // Ultra-HD Rear Tire Rain Spray Wake Particles
     if (useUltraFx && weatherParams.rainAmount > 0.22 && !inTunnel && playerSpeedMs > 12) {
       this.sprayPoints.visible = true;
-      this.sprayMat.opacity = Math.min(0.4, weatherParams.rainAmount * Math.min(1, playerSpeedMs / 55) * 0.42);
+      this.sprayMat.size = 0.42;
+      this.sprayMat.opacity = Math.min(0.48, weatherParams.rainAmount * Math.min(1, playerSpeedMs / 55) * 0.48);
       const carX = roadCenterX(playerS) + playerLaneOffset;
       const carY = getSurfaceElevationAt(playerS, playerLaneOffset);
       const carZ = -playerS;
@@ -1725,38 +1953,57 @@ export class HighwayWorld {
       return idx;
     };
 
-    const baseLoopStart = Math.floor(minS / ROUTE_LOOP_LENGTH_M) * ROUTE_LOOP_LENGTH_M;
-    for (let lapOff = 0; lapOff <= ROUTE_LOOP_LENGTH_M; lapOff += ROUTE_LOOP_LENGTH_M) {
-      for (const m of SHIN_TOMEI_ROUTE) {
-        const ms = baseLoopStart + lapOff + m.sPos;
-        if (ms < minS - 420 || ms > maxS + 420) continue;
+    if (activeJctBranchMilestone) {
+      if (JCT_BRANCH_LENGTH_M >= minS - 80 && JCT_BRANCH_LENGTH_M <= maxS + 80) {
+        this.jctEndGate.visible = true;
+        this.jctEndGate.position.set(
+          roadCenterX(JCT_BRANCH_LENGTH_M),
+          roadElevationY(JCT_BRANCH_LENGTH_M),
+          -JCT_BRANCH_LENGTH_M,
+        );
+        this.jctEndGate.rotation.set(
+          Math.atan(roadElevationDY(JCT_BRANCH_LENGTH_M)),
+          -Math.atan2(roadCenterDX(JCT_BRANCH_LENGTH_M), 1),
+          0,
+        );
+      } else {
+        this.jctEndGate.visible = false;
+      }
+    } else {
+      this.jctEndGate.visible = false;
+      const baseLoopStart = Math.floor(minS / ROUTE_LOOP_LENGTH_M) * ROUTE_LOOP_LENGTH_M;
+      for (let lapOff = 0; lapOff <= ROUTE_LOOP_LENGTH_M; lapOff += ROUTE_LOOP_LENGTH_M) {
+        for (const m of SHIN_TOMEI_ROUTE) {
+          const ms = baseLoopStart + lapOff + m.sPos;
+          if (ms < minS - 460 || ms > maxS + 460) continue;
 
-        const mx = roadCenterX(ms);
-        const my = roadElevationY(ms);
-        const mYaw = -Math.atan2(roadCenterDX(ms), 1);
-        const mPitch = Math.atan(roadElevationDY(ms));
+          const mx = roadCenterX(ms);
+          const my = roadElevationY(ms);
+          const mYaw = -Math.atan2(roadCenterDX(ms), 1);
+          const mPitch = Math.atan(roadElevationDY(ms));
 
-        const facilityGrp = this.facilityMap.get(m.styleId);
-        if (facilityGrp) {
-          facilityGrp.visible = true;
-          if (m.type === 'sa' || m.type === 'pa') {
-            const lift = m.type === 'sa' ? 2.2 : 1.2;
-            facilityGrp.position.set(mx, my + lift, -ms);
-            facilityGrp.rotation.set(0, mYaw, 0);
-          } else {
-            facilityGrp.position.set(mx, my, -ms);
-            facilityGrp.rotation.set(mPitch, mYaw, 0);
+          const facilityGrp = this.facilityMap.get(m.styleId);
+          if (facilityGrp) {
+            facilityGrp.visible = true;
+            if (m.type === 'sa' || m.type === 'pa') {
+              const lift = m.type === 'sa' ? 2.2 : 1.2;
+              facilityGrp.position.set(mx, my + lift, -ms);
+              facilityGrp.rotation.set(0, mYaw, 0);
+            } else {
+              facilityGrp.position.set(mx, my, -ms);
+              facilityGrp.rotation.set(mPitch, mYaw, 0);
+            }
           }
-        }
 
-        const divergeDs = m.type === 'sa' || m.type === 'ic' ? -165 : m.type === 'pa' ? -135 : -150;
-        const goreWidthX = m.type === 'sa' || m.type === 'ic' ? -9.625 : -9.475;
-        divGoreIdx = placeGore(this.divergeGorePool, divGoreIdx, ms + divergeDs, goreWidthX);
+          const divergeDs = m.type === 'sa' || m.type === 'ic' ? -165 : m.type === 'pa' ? -135 : -150;
+          const goreWidthX = m.type === 'sa' || m.type === 'ic' ? -9.625 : -9.475;
+          divGoreIdx = placeGore(this.divergeGorePool, divGoreIdx, ms + divergeDs, goreWidthX);
 
-        if (m.type === 'sa') {
-          mrgGoreIdx = placeGore(this.mergeGorePool, mrgGoreIdx, ms + 185, -9.55);
-        } else if (m.type === 'pa') {
-          mrgGoreIdx = placeGore(this.mergeGorePool, mrgGoreIdx, ms + 145, -9.45);
+          if (m.type === 'sa') {
+            mrgGoreIdx = placeGore(this.mergeGorePool, mrgGoreIdx, ms + 195, -9.55);
+          } else if (m.type === 'pa') {
+            mrgGoreIdx = placeGore(this.mergeGorePool, mrgGoreIdx, ms + 155, -9.45);
+          }
         }
       }
     }
@@ -2293,5 +2540,7 @@ export class HighwayWorld {
     this.rainLines.geometry.dispose();
     this.sprayMat.dispose();
     this.sprayPoints.geometry.dispose();
+    this.windMat.dispose();
+    this.windLines.geometry.dispose();
   }
 }

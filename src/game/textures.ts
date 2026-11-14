@@ -25,6 +25,8 @@ export interface ProceduralTexturePack {
   neopasaSignTexture: THREE.CanvasTexture;
   facilityTextures: Record<'suruga-sa' | 'shimizu-pa' | 'shizuoka-sa' | 'kakegawa-pa' | 'hamamatsu-sa', FacilityTextureSet>;
   icTollSignTexture: THREE.CanvasTexture;
+  saExitSignTexture: THREE.CanvasTexture;
+  jctRampSignTexture: THREE.CanvasTexture;
   mergeWarningSignTexture: THREE.CanvasTexture;
   goreSplitSignTexture: THREE.CanvasTexture;
   tunnelNameTexture: THREE.CanvasTexture;
@@ -954,6 +956,137 @@ function createTunnelNameTexture(maxAnisotropy: number): THREE.CanvasTexture {
   return configureTexture(new THREE.CanvasTexture(canvas), maxAnisotropy, true, false);
 }
 
+function createSaExitSignTexture(maxAnisotropy: number): THREE.CanvasTexture {
+  const w = 1024;
+  const h = 256;
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d')!;
+
+  ctx.fillStyle = '#00683d';
+  ctx.fillRect(0, 0, w, h);
+  ctx.strokeStyle = '#ffffff';
+  ctx.lineWidth = 10;
+  ctx.strokeRect(10, 10, w - 20, h - 20);
+
+  ctx.fillStyle = '#0284c7';
+  ctx.fillRect(36, 36, 172, 92);
+  ctx.strokeStyle = '#ffffff';
+  ctx.lineWidth = 5;
+  ctx.strokeRect(36, 36, 172, 92);
+
+  ctx.fillStyle = '#ffffff';
+  ctx.font = '900 50px "Noto Sans JP", sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('出口 ↑', 122, 82);
+
+  ctx.textAlign = 'left';
+  ctx.fillStyle = '#ffffff';
+  ctx.font = '900 58px "Noto Sans JP", sans-serif';
+  ctx.fillText('本線合流（静岡・名古屋方面）', 236, 84, w - 270);
+
+  ctx.fillStyle = '#fde047';
+  ctx.font = '800 40px "Noto Sans JP", sans-serif';
+  ctx.fillText('前方加速車線で十分加速して合流 ↗', 44, 190, w - 88);
+
+  return configureTexture(new THREE.CanvasTexture(canvas), maxAnisotropy, true, false);
+}
+
+function createJctRampSignTexture(maxAnisotropy: number): THREE.CanvasTexture {
+  const w = 1024;
+  const h = 256;
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d')!;
+
+  ctx.fillStyle = '#00683d';
+  ctx.fillRect(0, 0, w, h);
+  ctx.strokeStyle = '#ffffff';
+  ctx.lineWidth = 10;
+  ctx.strokeRect(10, 10, w - 20, h - 20);
+
+  ctx.fillStyle = '#fde047';
+  ctx.font = '900 62px "Noto Sans JP", sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('JCT 連絡高架橋   ↑', w / 2, 88);
+
+  ctx.fillStyle = '#ffffff';
+  ctx.font = '700 42px "Noto Sans JP", sans-serif';
+  ctx.fillText('この先 5.0km JCT連絡自動車道コースへ接続', w / 2, 184, w - 70);
+
+  return configureTexture(new THREE.CanvasTexture(canvas), maxAnisotropy, true, false);
+}
+
+export function updateGantrySignForJctBranch(
+  canvas: HTMLCanvasElement,
+  texture: THREE.CanvasTexture,
+  milestone: RouteMilestone,
+  remainingM: number,
+): void {
+  const w = canvas.width;
+  const h = canvas.height;
+  const ctx = canvas.getContext('2d')!;
+
+  ctx.fillStyle = '#005d36';
+  ctx.fillRect(0, 0, w, h);
+  ctx.strokeStyle = '#ffffff';
+  ctx.lineWidth = 14;
+  ctx.strokeRect(16, 16, w - 32, h - 32);
+
+  // Route shield
+  ctx.fillStyle = '#004125';
+  ctx.fillRect(54, 48, 200, 110);
+  ctx.strokeStyle = '#ffffff';
+  ctx.lineWidth = 6;
+  ctx.strokeRect(54, 48, 200, 110);
+
+  ctx.fillStyle = '#ffffff';
+  ctx.font = '800 64px "Chakra Petch", sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(milestone.routeCode, 154, 104);
+
+  ctx.textAlign = 'left';
+  ctx.font = '800 68px "Noto Sans JP", sans-serif';
+  ctx.fillText(`${milestone.branchNameJa}（連絡道）`, 284, 104, w - 330);
+
+  ctx.fillStyle = '#fde047';
+  ctx.font = '800 58px "Noto Sans JP", sans-serif';
+  const remKm = (Math.max(0, remainingM) / 1000).toFixed(1);
+  ctx.fillText(
+    remainingM <= 350
+      ? `まもなく ${milestone.nameJa} 5km終点ゲート ↑`
+      : `${milestone.nameJa} 連絡道 終点ゲートまで あと ${remKm} km`,
+    54,
+    255,
+    w - 108,
+  );
+
+  ctx.fillStyle = '#d1fae5';
+  ctx.font = '700 40px "Noto Sans JP", sans-serif';
+  ctx.fillText('片側3車線 · 最高速度 300km/h（ゲーム内JCT延長特例）', 54, 345, w - 108);
+
+  for (const ax of [w * 0.25, w * 0.5, w * 0.75]) {
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.moveTo(ax - 16, 405);
+    ctx.lineTo(ax + 16, 405);
+    ctx.lineTo(ax + 16, 470);
+    ctx.lineTo(ax + 42, 470);
+    ctx.lineTo(ax, 530);
+    ctx.lineTo(ax - 42, 470);
+    ctx.lineTo(ax - 16, 470);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  texture.needsUpdate = true;
+}
+
 export function updateGantrySignForMilestone(
   canvas: HTMLCanvasElement,
   texture: THREE.CanvasTexture,
@@ -1054,7 +1187,7 @@ export function updateGantrySignForMilestone(
 
   ctx.fillStyle = '#a7f3d0';
   ctx.font = '700 36px "Noto Sans JP", sans-serif';
-  ctx.fillText('現実120km/h / 特例300km/h', rx, 200, w * 0.47);
+  ctx.fillText('現実100-120 / 特例300km/h', rx, 200, w * 0.47);
 
   ctx.fillStyle = '#ffffff';
   ctx.font = '800 56px "Noto Sans JP", sans-serif';
@@ -1302,6 +1435,8 @@ export function createProceduralTexturePack(renderer: THREE.WebGLRenderer): Proc
   };
 
   const icTollSignTexture = createIcTollSignTexture(maxAniso);
+  const saExitSignTexture = createSaExitSignTexture(maxAniso);
+  const jctRampSignTexture = createJctRampSignTexture(maxAniso);
   const mergeWarningSignTexture = createMergeWarningSignTexture(maxAniso);
   const goreSplitSignTexture = createGoreSplitSignTexture(maxAniso);
   const tunnelNameTexture = createTunnelNameTexture(maxAniso);
@@ -1348,6 +1483,8 @@ export function createProceduralTexturePack(renderer: THREE.WebGLRenderer): Proc
     neopasaSignTexture,
     facilityTextures,
     icTollSignTexture,
+    saExitSignTexture,
+    jctRampSignTexture,
     mergeWarningSignTexture,
     goreSplitSignTexture,
     tunnelNameTexture,
@@ -1383,6 +1520,8 @@ export function createProceduralTexturePack(renderer: THREE.WebGLRenderer): Proc
         f.sign.dispose();
       });
       icTollSignTexture.dispose();
+      saExitSignTexture.dispose();
+      jctRampSignTexture.dispose();
       mergeWarningSignTexture.dispose();
       goreSplitSignTexture.dispose();
       tunnelNameTexture.dispose();

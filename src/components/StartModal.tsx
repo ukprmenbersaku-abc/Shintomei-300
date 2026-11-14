@@ -1,18 +1,32 @@
 import React from 'react';
-import { CarPaintId, DeviceMode, QualityMode, TrafficDensity, WeatherMode } from '../types/game';
-import { CAR_PAINTS, TRAFFIC_PRESETS } from '../game/constants';
+import {
+  CarPaintId,
+  DeviceMode,
+  LiveWeatherInfo,
+  QualityMode,
+  TrafficDensity,
+  VehicleType,
+  WeatherMode,
+} from '../types/game';
+import { CAR_PAINTS, TRAFFIC_PRESETS, WEATHER_CONFIG } from '../game/constants';
 import {
   AlertTriangle,
+  Bike,
+  CarFront,
+  CloudSun,
   Flame,
   Gauge,
   Home,
+  MapPin,
   Maximize2,
   Monitor,
   Play,
+  RefreshCw,
   RotateCcw,
   ShieldCheck,
   Smartphone,
   Sparkles,
+  Zap,
 } from 'lucide-react';
 import { PWAInstallButton } from './PWAInstallButton';
 
@@ -20,38 +34,52 @@ interface StartModalProps {
   isOpen: boolean;
   hasStartedOnce: boolean;
   deviceMode: DeviceMode;
+  vehicleType: VehicleType;
+  inJctBranch?: boolean;
   paint: CarPaintId;
   weatherMode: WeatherMode;
+  liveWeather: LiveWeatherInfo | null;
+  liveWeatherLoading: boolean;
   trafficDensity: TrafficDensity;
   qualityMode: QualityMode;
   onChangeDeviceMode: (mode: DeviceMode) => void;
+  onSelectVehicleType: (type: VehicleType) => void;
   onSelectPaint: (paint: CarPaintId) => void;
   onSelectWeather: (mode: WeatherMode) => void;
+  onSyncGeoWeather: () => void;
   onSelectTraffic: (density: TrafficDensity) => void;
   onSelectQuality: (mode: QualityMode) => void;
   onStartOrResume: () => void;
   onStartFullscreenUltra: () => void;
   onRestart: () => void;
   onReturnToTitle: () => void;
+  onExitJctBranch?: () => void;
 }
 
 export const StartModal: React.FC<StartModalProps> = ({
   isOpen,
   hasStartedOnce,
   deviceMode,
+  vehicleType,
+  inJctBranch,
   paint,
   weatherMode,
+  liveWeather,
+  liveWeatherLoading,
   trafficDensity,
   qualityMode,
   onChangeDeviceMode,
+  onSelectVehicleType,
   onSelectPaint,
   onSelectWeather,
+  onSyncGeoWeather,
   onSelectTraffic,
   onSelectQuality,
   onStartOrResume,
   onStartFullscreenUltra,
   onRestart,
   onReturnToTitle,
+  onExitJctBranch,
 }) => {
   if (!isOpen) return null;
 
@@ -121,13 +149,48 @@ export const StartModal: React.FC<StartModalProps> = ({
             <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
             <div className="text-xs leading-relaxed text-slate-200 space-y-1">
               <div className="font-bold text-amber-300">
-                現実の高速道路では法定速度（新東名120km/h）を守ってください
+                現実の高速道路では法定速度（原則100km/h・指定区間のみ120km/h）を守ってください
               </div>
               <p className="text-slate-300">
                 本ゲームは特別認可により<strong className="text-white">制限速度 300km/h</strong>
-                ですが、周囲の一般乗用車は新東名の実制限速度と同じ<strong className="text-white tabular-nums">120km/h前後</strong>
-                （大型車80〜90km/h）で走行しています。
+                ですが、周囲の一般乗用車は現実の高速基準と同じ<strong className="text-white tabular-nums">100〜120km/h前後</strong>
+                （大型貨物90km/h）で走行しています。
               </p>
+            </div>
+          </div>
+
+          {/* Vehicle Class Selector */}
+          <div className="space-y-1.5">
+            <div className="text-xs font-medium text-slate-400">車両クラス選択（いつでも切替可）</div>
+            <div className="grid grid-cols-3 gap-2 bg-[#090d15] p-1.5 rounded-xl border border-slate-800">
+              {[
+                { id: 'car' as VehicleType, label: 'GT スポーツカー', desc: '6速MT · 爽快V6サウンド', icon: CarFront },
+                { id: 'bike' as VehicleType, label: 'スポーツバイク', desc: 'バンク角 · 高回転14,000RPM', icon: Bike },
+                { id: 'ev' as VehicleType, label: 'EV ハイパーカー', desc: '1速直結 · 爆発的モーター加速', icon: Zap },
+              ].map((item) => {
+                const Icon = item.icon;
+                const active = vehicleType === item.id;
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => onSelectVehicleType(item.id)}
+                    className={`px-2.5 py-2 rounded-lg text-left transition-colors border ${
+                      active
+                        ? 'bg-amber-500/18 border-amber-400 text-white'
+                        : 'border-transparent text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
+                    }`}
+                  >
+                    <div className="flex items-center gap-1.5 text-xs font-bold whitespace-nowrap">
+                      <Icon className={`w-4 h-4 shrink-0 ${active ? 'text-amber-400' : 'text-slate-400'}`} />
+                      <span>{item.label}</span>
+                    </div>
+                    <div className="text-[10px] text-slate-400 mt-0.5 hidden sm:block [@media(max-height:540px)]:hidden">
+                      {item.desc}
+                    </div>
+                  </button>
+                );
+              })}
             </div>
           </div>
 
@@ -210,9 +273,10 @@ export const StartModal: React.FC<StartModalProps> = ({
 
           <div className="space-y-1.5">
             <div className="text-xs font-medium text-slate-400">天候・時間帯プリセット</div>
-            <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5 bg-[#090d15] p-1 rounded-lg border border-slate-800">
+            <div className="grid grid-cols-4 sm:grid-cols-7 gap-1.5 bg-[#090d15] p-1 rounded-lg border border-slate-800">
               {[
                 { mode: WeatherMode.Auto, label: '自動変化' },
+                { mode: WeatherMode.Live, label: '現実連動' },
                 { mode: WeatherMode.Clear, label: '晴天' },
                 { mode: WeatherMode.Sunset, label: '夕暮れ' },
                 { mode: WeatherMode.Night, label: '夜間' },
@@ -223,16 +287,54 @@ export const StartModal: React.FC<StartModalProps> = ({
                   key={item.mode}
                   type="button"
                   onClick={() => onSelectWeather(item.mode)}
-                  className={`px-2 py-1.5 rounded text-xs font-medium transition-colors whitespace-nowrap ${
+                  className={`px-2 py-1.5 rounded text-xs font-medium transition-colors whitespace-nowrap flex items-center justify-center gap-1 ${
                     weatherMode === item.mode
-                      ? 'bg-emerald-700 text-white'
+                      ? item.mode === WeatherMode.Live
+                        ? 'bg-sky-600 text-white'
+                        : 'bg-emerald-700 text-white'
                       : 'text-slate-400 hover:text-slate-200'
                   }`}
                 >
-                  {item.label}
+                  {item.mode === WeatherMode.Live && <CloudSun className="w-3.5 h-3.5 shrink-0" />}
+                  <span>{item.label}</span>
                 </button>
               ))}
             </div>
+
+            {weatherMode === WeatherMode.Live && (
+              <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-[#0d1829] border border-sky-500/35 px-3 py-2 text-xs">
+                <div className="flex items-center gap-2 text-slate-200 min-w-0">
+                  <CloudSun className="w-4 h-4 text-sky-300 shrink-0" />
+                  <span className="truncate">
+                    {liveWeatherLoading
+                      ? '実際の天気データを取得しています…'
+                      : liveWeather
+                        ? `${liveWeather.locationLabel}：${liveWeather.weatherLabelJa} ${Math.round(liveWeather.temperatureC)}℃ → ${WEATHER_CONFIG[liveWeather.mappedWeather].shortJa}`
+                        : '現実の天気データを取得中…'}
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <button
+                    type="button"
+                    onClick={onSyncGeoWeather}
+                    disabled={liveWeatherLoading}
+                    className="px-2.5 py-1 rounded bg-sky-700 hover:bg-sky-600 disabled:opacity-50 text-white text-[11px] font-semibold flex items-center gap-1 transition-colors"
+                  >
+                    <MapPin className="w-3 h-3" />
+                    <span>現在地に合わせる</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onSelectWeather(WeatherMode.Live)}
+                    disabled={liveWeatherLoading}
+                    title="天気を再取得"
+                    className="p-1.5 rounded bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-slate-200 transition-colors"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${liveWeatherLoading ? 'animate-spin' : ''}`} />
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Controls Summary */}
@@ -288,6 +390,15 @@ export const StartModal: React.FC<StartModalProps> = ({
             </button>
 
             <div className="flex flex-wrap items-center gap-2 ml-auto">
+              {inJctBranch && onExitJctBranch && (
+                <button
+                  type="button"
+                  onClick={onExitJctBranch}
+                  className="min-h-[42px] px-3.5 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-600 text-white text-xs sm:text-sm font-bold flex items-center gap-1.5 transition-colors whitespace-nowrap"
+                >
+                  <span>E1A 本線へ戻る</span>
+                </button>
+              )}
               {hasStartedOnce && (
                 <button
                   type="button"

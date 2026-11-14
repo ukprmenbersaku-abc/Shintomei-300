@@ -1,4 +1,4 @@
-import { ActiveWeather, CarPaintId, TrafficArchetype, TrafficDensity } from '../types/game';
+import { ActiveWeather, CarPaintId, TrafficArchetype, TrafficDensity, VehicleType } from '../types/game';
 
 export const EXPRESSWAY = {
   LANE_WIDTH: 3.75,
@@ -25,6 +25,8 @@ export const EXPRESSWAY = {
   GANTRY_INTERVAL_M: 450,
   LAMP_INTERVAL_M: 40,
 };
+
+export const JCT_BRANCH_LENGTH_M = 5000;
 
 export const PARKING_BAY_COORDS = {
   sa: { laneOffset: -40.5, ds: 0, halfW: 3.8, halfL: 7.2 },
@@ -69,7 +71,7 @@ export const SHIN_TOMEI_ROUTE: RouteMilestone[] = [
     routeCode: 'E1',
     branchNameJa: '東名 厚木・東京',
     mainAheadJa: '新秦野・静岡・名古屋',
-    featureJa: '東名接続高架ジャンクション',
+    featureJa: '東名接続高架 ＋ 5.0km連絡路',
     realKmPost: 13.8,
   },
   {
@@ -83,7 +85,7 @@ export const SHIN_TOMEI_ROUTE: RouteMilestone[] = [
     mainAheadJa: '新富士・静岡・浜松',
     featureJa: '地中海リゾート・駿河湾展望テラス＆鐘の広場',
     restBonusTitleJa: '【NEOPASA 駿河湾沼津SA】駿河湾オーシャンテラス到着 +500pts！',
-    restBonusBodyJa: '地中海風の白亜アーチと鐘の広場・駿河湾一望のオーシャンビュー！前方の加速車線から本線へ合流できます。',
+    restBonusBodyJa: '構内では車やバイクを自由に操縦・転回して緑枠 [P] へ駐車できます！前方の出口ゲート・加速車線から本線へ合流できます。',
     realKmPost: 56.4,
   },
   {
@@ -107,7 +109,7 @@ export const SHIN_TOMEI_ROUTE: RouteMilestone[] = [
     routeCode: 'E52',
     branchNameJa: '中部横断道 甲府 / 東名清水',
     mainAheadJa: '清水PA・静岡・浜松',
-    featureJa: '中部横断道・清水連絡路 立体分岐',
+    featureJa: '中部横断道・清水連絡路 5.0kmコース',
     realKmPost: 93.0,
   },
   {
@@ -121,7 +123,7 @@ export const SHIN_TOMEI_ROUTE: RouteMilestone[] = [
     mainAheadJa: '新静岡・藤枝・浜松',
     featureJa: '赤レンガ＆鉄骨ガレージ・バイク＆名車展示ピット',
     restBonusTitleJa: '【NEOPASA 清水PA】くるま旅ガレージピット休憩 +350pts！',
-    restBonusBodyJa: '赤レンガと鉄骨のモータースポーツ風PA！展示スポーツカー＆バイク駐輪棟を横目に、加速車線から本線復帰できます。',
+    restBonusBodyJa: '赤レンガと鉄骨のモータースポーツ風PA！構内で自由に転回・駐車し、前方の出口ゲート・加速車線から本線復帰できます。',
     realKmPost: 98.6,
   },
   {
@@ -135,7 +137,7 @@ export const SHIN_TOMEI_ROUTE: RouteMilestone[] = [
     mainAheadJa: '島田金谷・浜松・名古屋',
     featureJa: '静岡杉ルーバー建築・茶畑テラス＆しずおかマルシェ',
     restBonusTitleJa: '【NEOPASA 静岡SA】静岡杉＆お茶マルシェ休憩 +500pts！',
-    restBonusBodyJa: '静岡杉の温もりある木製ルーバーと緑豊かな茶畑テラス！前方右側の長い加速車線を使ってスムーズに本線へ合流してください。',
+    restBonusBodyJa: '構内で通常のクルマ同様にハンドルで自由移動・駐車が可能！前方出口の長い加速車線から本線へ合流してください。',
     realKmPost: 118.5,
   },
   {
@@ -161,7 +163,7 @@ export const SHIN_TOMEI_ROUTE: RouteMilestone[] = [
     mainAheadJa: '浜松SA・浜松いなさJCT',
     featureJa: '茶処・和風宿場モダン小型PA（24H休憩所）',
     restBonusTitleJa: '【掛川 PA】茶処・宿場モダンPAでひと息 +350pts！',
-    restBonusBodyJa: '落ち着きある小型パーキングエリアでリフレッシュ！加速車線から周囲の120km/hフローに合わせて合流できます。',
+    restBonusBodyJa: '構内で自由にステアリング操作・バック・駐車を楽しめます。前方の出口ゲートから加速車線を通って本線へ！',
     realKmPost: 147.2,
   },
   {
@@ -175,7 +177,7 @@ export const SHIN_TOMEI_ROUTE: RouteMilestone[] = [
     mainAheadJa: '浜松いなさJCT・名古屋',
     featureJa: '音楽のまち浜松・巨大ピアノ鍵盤ファサード＆音楽ドーム',
     restBonusTitleJa: '【NEOPASA 浜松SA】ピアノ鍵盤テラス休憩 +500pts！',
-    restBonusBodyJa: '楽器の街ならではの白黒ピアノ鍵盤ファサード＆ミュージックスポット！前方の加速車線から本線へ合流しましょう。',
+    restBonusBodyJa: 'ピアノ鍵盤の建物の前で自由移動・駐車できます！前方の出口案内ゲートを通って加速車線から本線へ合流しましょう。',
     realKmPost: 162.8,
   },
   {
@@ -187,32 +189,146 @@ export const SHIN_TOMEI_ROUTE: RouteMilestone[] = [
     routeCode: 'E69',
     branchNameJa: '三遠南信道 / 東名三ヶ日',
     mainAheadJa: '新城・豊田東JCT・名古屋',
-    featureJa: '三遠南信道・引佐連絡路 立体ジャンクション',
+    featureJa: '三遠南信道・引佐連絡路 5.0kmコース',
     realKmPost: 174.6,
   },
 ];
 
 export const ROUTE_LOOP_LENGTH_M = 15900;
 
-export const CAR_PHYSICS = {
-  MAX_SPEED_KMH: 300,
-  MAX_SPEED_MS: 300 / 3.6,
-  MASS_KG: 1480,
-  WHEELBASE_M: 2.72,
-  DRAG_COEFF_AREA: 0.61,
-  AIR_DENSITY: 1.225,
-  ROLLING_RESISTANCE: 0.015,
-  DOWNFORCE_COEFF: 1.4,
-  MAX_ENGINE_FORCE_N: 11200,
-  MAX_BRAKE_FORCE_N: 22000,
-  GEAR_RATIOS: [3.42, 2.28, 1.64, 1.25, 0.99, 0.81] as const,
-  FINAL_DRIVE: 3.55,
-  WHEEL_RADIUS_M: 0.34,
-  IDLE_RPM: 1050,
-  REDLINE_RPM: 8400,
-  SHIFT_UP_RPM: 7950,
-  SHIFT_DOWN_RPM: 4100,
+export interface VehiclePhysicsSpec {
+  id: VehicleType;
+  nameJa: string;
+  shortJa: string;
+  taglineJa: string;
+  MAX_SPEED_KMH: number;
+  MAX_SPEED_MS: number;
+  MASS_KG: number;
+  WHEELBASE_M: number;
+  DRAG_COEFF_AREA: number;
+  AIR_DENSITY: number;
+  ROLLING_RESISTANCE: number;
+  DOWNFORCE_COEFF: number;
+  MAX_ENGINE_FORCE_N: number;
+  MAX_BRAKE_FORCE_N: number;
+  GEAR_RATIOS: readonly number[];
+  FINAL_DRIVE: number;
+  WHEEL_RADIUS_M: number;
+  IDLE_RPM: number;
+  REDLINE_RPM: number;
+  SHIFT_UP_RPM: number;
+  SHIFT_DOWN_RPM: number;
+  HALF_WIDTH_M: number;
+  HALF_LENGTH_M: number;
+  MAX_ROLL_RAD: number;
+  STEER_AUTHORITY: number;
+  CAM_DIST_OFFSET: number;
+  CAM_HEIGHT_OFFSET: number;
+  HAS_EXHAUST_FLAMES: boolean;
+  HAS_WIPERS: boolean;
+  IS_DIRECT_DRIVE: boolean;
+}
+
+export const VEHICLE_SPECS: Record<VehicleType, VehiclePhysicsSpec> = {
+  car: {
+    id: 'car',
+    nameJa: 'GT スポーツカー',
+    shortJa: 'GTカー',
+    taglineJa: '6速MT · 11,200N ツインターボ直6 · 300km/h',
+    MAX_SPEED_KMH: 300,
+    MAX_SPEED_MS: 300 / 3.6,
+    MASS_KG: 1480,
+    WHEELBASE_M: 2.72,
+    DRAG_COEFF_AREA: 0.61,
+    AIR_DENSITY: 1.225,
+    ROLLING_RESISTANCE: 0.015,
+    DOWNFORCE_COEFF: 1.4,
+    MAX_ENGINE_FORCE_N: 11200,
+    MAX_BRAKE_FORCE_N: 22000,
+    GEAR_RATIOS: [3.42, 2.28, 1.64, 1.25, 0.99, 0.81] as const,
+    FINAL_DRIVE: 3.55,
+    WHEEL_RADIUS_M: 0.34,
+    IDLE_RPM: 1050,
+    REDLINE_RPM: 8400,
+    SHIFT_UP_RPM: 7950,
+    SHIFT_DOWN_RPM: 4100,
+    HALF_WIDTH_M: 0.94,
+    HALF_LENGTH_M: 2.3,
+    MAX_ROLL_RAD: 0.038,
+    STEER_AUTHORITY: 0.95,
+    CAM_DIST_OFFSET: 0,
+    CAM_HEIGHT_OFFSET: 0,
+    HAS_EXHAUST_FLAMES: true,
+    HAS_WIPERS: true,
+    IS_DIRECT_DRIVE: false,
+  },
+  bike: {
+    id: 'bike',
+    nameJa: 'スーパースポーツバイク',
+    shortJa: 'バイク',
+    taglineJa: '14,500rpm 並列4気筒 · 緻密ハンドリング · 車間すり抜け',
+    MAX_SPEED_KMH: 300,
+    MAX_SPEED_MS: 300 / 3.6,
+    MASS_KG: 218,
+    WHEELBASE_M: 1.46,
+    DRAG_COEFF_AREA: 0.32,
+    AIR_DENSITY: 1.225,
+    ROLLING_RESISTANCE: 0.013,
+    DOWNFORCE_COEFF: 0.24,
+    MAX_ENGINE_FORCE_N: 3420,
+    MAX_BRAKE_FORCE_N: 4800,
+    GEAR_RATIOS: [2.65, 2.05, 1.66, 1.38, 1.18, 1.04] as const,
+    FINAL_DRIVE: 2.85,
+    WHEEL_RADIUS_M: 0.305,
+    IDLE_RPM: 1350,
+    REDLINE_RPM: 14500,
+    SHIFT_UP_RPM: 13600,
+    SHIFT_DOWN_RPM: 6800,
+    HALF_WIDTH_M: 0.35,
+    HALF_LENGTH_M: 1.04,
+    MAX_ROLL_RAD: 0.36,
+    STEER_AUTHORITY: 0.68,
+    CAM_DIST_OFFSET: -1.15,
+    CAM_HEIGHT_OFFSET: -0.25,
+    HAS_EXHAUST_FLAMES: true,
+    HAS_WIPERS: false,
+    IS_DIRECT_DRIVE: false,
+  },
+  ev: {
+    id: 'ev',
+    nameJa: 'EV ハイパーカー',
+    shortJa: 'EV車',
+    taglineJa: '1速直結AWD · 0km/h瞬間最大トルク · 回生ブレーキ',
+    MAX_SPEED_KMH: 300,
+    MAX_SPEED_MS: 300 / 3.6,
+    MASS_KG: 1760,
+    WHEELBASE_M: 2.84,
+    DRAG_COEFF_AREA: 0.5,
+    AIR_DENSITY: 1.225,
+    ROLLING_RESISTANCE: 0.014,
+    DOWNFORCE_COEFF: 1.55,
+    MAX_ENGINE_FORCE_N: 15200,
+    MAX_BRAKE_FORCE_N: 25500,
+    GEAR_RATIOS: [1.0] as const,
+    FINAL_DRIVE: 7.6,
+    WHEEL_RADIUS_M: 0.34,
+    IDLE_RPM: 0,
+    REDLINE_RPM: 18000,
+    SHIFT_UP_RPM: 18000,
+    SHIFT_DOWN_RPM: 0,
+    HALF_WIDTH_M: 0.95,
+    HALF_LENGTH_M: 2.34,
+    MAX_ROLL_RAD: 0.028,
+    STEER_AUTHORITY: 0.96,
+    CAM_DIST_OFFSET: 0.08,
+    CAM_HEIGHT_OFFSET: 0,
+    HAS_EXHAUST_FLAMES: false,
+    HAS_WIPERS: true,
+    IS_DIRECT_DRIVE: true,
+  },
 };
+
+export const CAR_PHYSICS = VEHICLE_SPECS.car;
 
 export const WEATHER_CONFIG: Record<
   ActiveWeather,
@@ -474,7 +590,7 @@ export const TRAFFIC_SPECS: Record<
 
 export const LED_BOARD_MESSAGES: string[] = [
   'この先 最高速度 300km/h（ゲーム内特例）',
-  '※現実の新東名は最高120km/h（大型車80〜90km/h）です',
+  '※現実の高速は原則100km/h（御殿場〜浜松いなさ指定区間のみ120km/h・大型90km/h）',
   '左車線から NEOPASA 駿河湾沼津・静岡・浜松 へ入出庫できます',
   '追越車線の走り続けは禁止です（300km/hでも走行車線へ）',
   '雨天・濃霧時は路面摩擦低下！車間距離を十分に',
@@ -482,8 +598,8 @@ export const LED_BOARD_MESSAGES: string[] = [
 
 export const HUMOROUS_SAFETY_TIPS: { title: string; body: string; tone: 'info' | 'warning' | 'humor' }[] = [
   {
-    title: '【公式風おしらせ】現実では法定速度（新東名120km/h）を守ってください',
-    body: 'このゲームの最高速度は300km/hですが、現実の新東名高速道路の法定最高速度は120km/h（大型車80〜90km/h）です。実車では安全運転をお願いします！',
+    title: '【公式風おしらせ】現実では法定速度（原則100km/h・指定区間120km/h）を遵守',
+    body: 'このゲームの最高速度は300km/hですが、現実の高速道路は原則100km/h（御殿場JCT〜浜松いなさJCT指定区間のみ120km/h・大型貨物90km/h）です。実車では安全運転をお願いします！',
     tone: 'humor',
   },
   {
@@ -492,8 +608,8 @@ export const HUMOROUS_SAFETY_TIPS: { title: string; body: string; tone: 'info' |
     tone: 'info',
   },
   {
-    title: '【高速隊パトロール中】他車は120km/h基準で走行中',
-    body: '一般の乗用車は新東名リアル基準の約115〜122km/h、大型トラックは80〜90km/hで走行しています。現実で300km/h出すと一発で免停＋裁判コースです。',
+    title: '【高速隊パトロール中】他車は現実の高速基準で走行中',
+    body: '一般の乗用車は現実基準の100〜120km/h、大型トラックは90km/h基準で走行しています。現実で300km/h出すと一発で免停＋裁判＋ニュース速報コースです。',
     tone: 'warning',
   },
   {

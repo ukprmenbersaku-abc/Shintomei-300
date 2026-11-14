@@ -1,5 +1,8 @@
 import React from 'react';
 import {
+  Bike,
+  CarFront,
+  CloudSun,
   Flame,
   Gauge,
   Maximize2,
@@ -8,17 +11,25 @@ import {
   ShieldCheck,
   Smartphone,
   Sparkles,
+  Zap,
 } from 'lucide-react';
 import { CAR_PAINTS } from '../game/constants';
-import { CarPaintId, DeviceMode, QualityMode } from '../types/game';
+import { CarPaintId, DeviceMode, LiveWeatherInfo, QualityMode, VehicleType, WeatherMode } from '../types/game';
 import { PWAInstallButton } from './PWAInstallButton';
 
 interface TitleScreenProps {
   recommendedDevice: DeviceMode;
+  vehicleType: VehicleType;
   paint: CarPaintId;
   qualityMode: QualityMode;
+  weatherMode: WeatherMode;
+  liveWeather: LiveWeatherInfo | null;
+  liveWeatherLoading: boolean;
+  onSelectVehicleType: (type: VehicleType) => void;
   onSelectPaint: (paint: CarPaintId) => void;
   onSelectQuality: (mode: QualityMode) => void;
+  onSelectWeather: (mode: WeatherMode) => void;
+  onSyncGeoWeather: () => void;
   onStartDevice: (mode: DeviceMode, fullscreenUltra?: boolean) => void;
   onOpenGarage: (mode: DeviceMode) => void;
   onShowLegalGuide: () => void;
@@ -26,13 +37,19 @@ interface TitleScreenProps {
 
 export const TitleScreen: React.FC<TitleScreenProps> = ({
   recommendedDevice,
+  vehicleType,
   paint,
   qualityMode,
+  weatherMode,
+  liveWeather,
+  liveWeatherLoading,
+  onSelectVehicleType,
   onSelectPaint,
   onSelectQuality,
+  onSelectWeather,
+  onShowLegalGuide,
   onStartDevice,
   onOpenGarage,
-  onShowLegalGuide,
 }) => {
   return (
     <div className="fixed inset-0 z-30 flex flex-col justify-start sm:justify-between [@media(max-height:540px)]:justify-start overflow-y-auto bg-gradient-to-b from-[#05080f]/82 via-[#05080f]/45 to-[#05080f]/94 px-3 py-3 sm:px-8 sm:py-6 [@media(max-height:540px)]:py-2 pt-safe pb-safe px-safe pointer-events-auto">
@@ -47,12 +64,33 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
               SHIN-TOMEI EXPRESSWAY
             </div>
             <div className="text-[11px] text-slate-300 hidden sm:block [@media(max-height:540px)]:hidden">
-              海老名南JCT 〜 駿河湾沼津 〜 静岡 〜 浜松いなさJCT
+              伊勢原JCT 〜 駿河湾沼津 〜 静岡 〜 浜松いなさJCT
             </div>
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap justify-end">
+          <button
+            type="button"
+            onClick={() => onSelectWeather(weatherMode === WeatherMode.Live ? WeatherMode.Auto : WeatherMode.Live)}
+            title="現実の天気・時間帯と連動"
+            className={`min-h-[38px] sm:min-h-[40px] px-3 py-1.5 sm:py-2 rounded-xl border text-xs font-semibold flex items-center gap-1.5 transition-colors whitespace-nowrap ${
+              weatherMode === WeatherMode.Live
+                ? 'bg-emerald-700/90 border-emerald-400 text-white'
+                : 'bg-[#101827]/90 hover:bg-[#19253b] border-slate-700 text-sky-200'
+            }`}
+          >
+            <CloudSun className="w-4 h-4 shrink-0" />
+            <span>
+              {weatherMode === WeatherMode.Live
+                ? liveWeatherLoading
+                  ? '現実天気 取得中…'
+                  : liveWeather
+                    ? `現実: ${liveWeather.weatherLabelJa} ${Math.round(liveWeather.temperatureC)}℃`
+                    : '現実天気 ON'
+                : '現実天気と連動'}
+            </span>
+          </button>
           <PWAInstallButton compact />
           <button
             type="button"
@@ -70,14 +108,14 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
         <div className="flex flex-row items-center justify-between gap-3 sm:gap-4 bg-[#080e1a]/78 border border-slate-700/70 rounded-2xl p-3.5 sm:p-6 [@media(max-height:540px)]:p-3 shadow-2xl">
           <div className="space-y-1 sm:space-y-1.5 min-w-0">
             <div className="text-[10px] sm:text-xs font-bold tracking-widest uppercase text-amber-400">
-              SPECIAL 300 KM/H SIMULATION · REAL 120 KM/H TRAFFIC
+              SPECIAL 300 KM/H SIMULATION · REAL 100–120 KM/H TRAFFIC
             </div>
             <h1 className="text-xl sm:text-4xl [@media(max-height:540px)]:text-lg font-black tracking-tight text-white leading-tight">
               E1A 新東名 300km/h
               <span className="block sm:inline sm:ml-2 text-sky-300">ハイウェイ・シミュレーター</span>
             </h1>
             <p className="text-xs sm:text-sm text-slate-300 max-w-2xl leading-relaxed [@media(max-height:540px)]:hidden">
-              実在SA・PA・IC（駿河湾沼津・清水・静岡・掛川・浜松）と天候変化の中、時速300kmの非日常を体感。周囲の一般車は新東名の実制限速度（120km/h）で走行しています。
+              実在SA・PA・IC（駿河湾沼津・清水・静岡・掛川・浜松）と天候変化の中、時速300kmの非日常を体感。周囲の一般車は現実の高速基準（原則100km/h・一部指定区間120km/h・大型90km/h）で走行しています。
             </p>
           </div>
 
@@ -240,11 +278,41 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
         </div>
       </main>
 
-      {/* Bottom Live Customizer Bar (Paint + Ultra-HD Switch) */}
+      {/* Bottom Live Customizer Bar (Vehicle + Paint + Ultra-HD Switch) */}
       <footer className="w-full max-w-5xl mx-auto flex flex-wrap items-center justify-between gap-2.5 sm:gap-3 bg-[#080e1a]/88 border border-slate-800 rounded-2xl px-3.5 py-2.5 sm:px-4 sm:py-3 [@media(max-height:540px)]:py-2 shrink-0">
-        <div className="flex flex-wrap items-center gap-2.5 sm:gap-3">
-          <span className="text-xs font-medium text-slate-400">ボディカラー</span>
-          <div className="flex items-center gap-1.5 sm:gap-2">
+        {/* 3-Way Vehicle Selector */}
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-medium text-slate-400">マシン</span>
+          <div className="grid grid-cols-3 gap-1 bg-[#05080f] p-1 rounded-xl border border-slate-800">
+            {[
+              { id: 'car' as VehicleType, label: 'GTスポーツ', icon: CarFront },
+              { id: 'bike' as VehicleType, label: 'バイク', icon: Bike },
+              { id: 'ev' as VehicleType, label: 'EV', icon: Zap },
+            ].map((item) => {
+              const Icon = item.icon;
+              const active = vehicleType === item.id;
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => onSelectVehicleType(item.id)}
+                  className={`px-2.5 py-1.5 rounded-lg text-xs font-bold flex items-center justify-center gap-1 transition-colors whitespace-nowrap ${
+                    active
+                      ? 'bg-amber-500 text-slate-950'
+                      : 'text-slate-300 hover:text-white'
+                  }`}
+                >
+                  <Icon className="w-3.5 h-3.5 shrink-0" />
+                  <span>{item.label}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2 sm:gap-2.5">
+          <span className="text-xs font-medium text-slate-400">カラー</span>
+          <div className="flex items-center gap-1.5">
             {(Object.keys(CAR_PAINTS) as CarPaintId[]).map((id) => {
               const p = CAR_PAINTS[id];
               const active = paint === id;
@@ -265,18 +333,18 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
               );
             })}
           </div>
-          <span className="text-xs text-slate-300 hidden sm:inline [@media(max-height:540px)]:hidden">
+          <span className="text-xs text-slate-300 hidden md:inline [@media(max-height:540px)]:hidden">
             {CAR_PAINTS[paint].nameJa}
           </span>
         </div>
 
         <div className="flex items-center gap-2">
-          <span className="text-xs font-medium text-slate-400">画質設定</span>
+          <span className="text-xs font-medium text-slate-400">画質</span>
           <div className="grid grid-cols-2 gap-1 bg-[#05080f] p-1 rounded-xl border border-slate-800">
             <button
               type="button"
               onClick={() => onSelectQuality(QualityMode.Ultra)}
-              className={`px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors whitespace-nowrap ${
+              className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1 transition-colors whitespace-nowrap ${
                 qualityMode === QualityMode.Ultra
                   ? 'bg-sky-600 text-white'
                   : 'text-slate-400 hover:text-slate-200'
@@ -288,13 +356,13 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
             <button
               type="button"
               onClick={() => onSelectQuality(QualityMode.Standard)}
-              className={`px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap ${
+              className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap ${
                 qualityMode === QualityMode.Standard
                   ? 'bg-slate-700 text-white'
                   : 'text-slate-400 hover:text-slate-200'
               }`}
             >
-              <span>標準（省電力）</span>
+              <span>標準</span>
             </button>
           </div>
         </div>

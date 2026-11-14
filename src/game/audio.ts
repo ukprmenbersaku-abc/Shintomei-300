@@ -1,3 +1,5 @@
+import { VehicleType } from '../types/game';
+
 export class HighwayAudioEngine {
   private ctx: AudioContext | null = null;
   private masterGain: GainNode | null = null;
@@ -10,6 +12,10 @@ export class HighwayAudioEngine {
 
   private turboOsc: OscillatorNode | null = null;
   private turboGain: GainNode | null = null;
+
+  private evOsc1: OscillatorNode | null = null;
+  private evOsc2: OscillatorNode | null = null;
+  private evGain: GainNode | null = null;
 
   private windFilter: BiquadFilterNode | null = null;
   private windGain: GainNode | null = null;
@@ -61,7 +67,7 @@ export class HighwayAudioEngine {
     master.connect(ctx.destination);
     this.masterGain = master;
 
-    // Engine twin-turbo inline-6 harmonic stack
+    // Combustion engine harmonic stack (GT car + supersport bike)
     const engFilter = ctx.createBiquadFilter();
     engFilter.type = 'lowpass';
     engFilter.frequency.value = 320;
@@ -113,6 +119,27 @@ export class HighwayAudioEngine {
     turboOsc.start();
     this.turboOsc = turboOsc;
     this.turboGain = turboGain;
+
+    // Dual-motor EV inverter harmonic whine + regenerative braking tone
+    const evOsc1 = ctx.createOscillator();
+    evOsc1.type = 'sine';
+    evOsc1.frequency.value = 180;
+    const evOsc2 = ctx.createOscillator();
+    evOsc2.type = 'triangle';
+    evOsc2.frequency.value = 360;
+    const evOsc2Gain = ctx.createGain();
+    evOsc2Gain.gain.value = 0.25;
+    const evGain = ctx.createGain();
+    evGain.gain.value = 0;
+    evOsc1.connect(evGain);
+    evOsc2.connect(evOsc2Gain);
+    evOsc2Gain.connect(evGain);
+    evGain.connect(master);
+    evOsc1.start();
+    evOsc2.start();
+    this.evOsc1 = evOsc1;
+    this.evOsc2 = evOsc2;
+    this.evGain = evGain;
 
     // Noise buffer for wind, rain, tire screech
     const bufferSize = ctx.sampleRate * 2;
@@ -222,6 +249,7 @@ export class HighwayAudioEngine {
 
   public update(params: {
     active: boolean;
+    vehicleType?: VehicleType;
     speedKmh: number;
     rpm: number;
     throttle: number;
@@ -237,6 +265,7 @@ export class HighwayAudioEngine {
     if (!params.active) {
       this.engineGain?.gain.setTargetAtTime(0, now, 0.08);
       this.turboGain?.gain.setTargetAtTime(0, now, 0.08);
+      this.evGain?.gain.setTargetAtTime(0, now, 0.08);
       this.windGain?.gain.setTargetAtTime(0, now, 0.08);
       this.rainGain?.gain.setTargetAtTime(0, now, 0.08);
       this.screechGain?.gain.setTargetAtTime(0, now, 0.08);
@@ -246,31 +275,63 @@ export class HighwayAudioEngine {
       return;
     }
 
-    const rpmNorm = Math.max(0, Math.min(1, (params.rpm - 1000) / 7500));
-    const baseFreq = 42 + rpmNorm * 178;
-
-    this.engineOsc1?.frequency.setTargetAtTime(baseFreq, now, 0.03);
-    this.engineOsc2?.frequency.setTargetAtTime(baseFreq * 1.5, now, 0.03);
-    this.engineSub?.frequency.setTargetAtTime(baseFreq * 0.5, now, 0.03);
-
-    const tunnelBoost = params.inTunnel ? 1.45 : 1.0;
-    const cutoff = (260 + rpmNorm * 1400 + params.throttle * 650) * (params.inTunnel ? 1.25 : 1.0);
-    this.engineFilter?.frequency.setTargetAtTime(cutoff, now, 0.04);
-
-    const engVol = (0.09 + params.throttle * 0.14 + rpmNorm * 0.08) * tunnelBoost;
-    this.engineGain?.gain.setTargetAtTime(engVol, now, 0.05);
-
-    // Turbo spool
-    const turboFreq = 1600 + rpmNorm * 3200;
-    const turboVol = Math.max(0, (rpmNorm - 0.35) * params.throttle) * 0.035;
-    this.turboOsc?.frequency.setTargetAtTime(turboFreq, now, 0.05);
-    this.turboGain?.gain.setTargetAtTime(turboVol, now, 0.06);
-
+    const vType = params.vehicleType ?? 'car';
     const absSpeedKmh = Math.abs(params.speedKmh);
-
-    // Wind rush scales strongly above 100 km/h
     const speedRatio = Math.max(0, Math.min(1, absSpeedKmh / 300));
-    const windVol = Math.pow(speedRatio, 1.8) * 0.24 * (params.inTunnel ? 1.3 : 1.0);
+    const brakeInput = Math.max(0, Math.min(1, params.brake ?? 0));
+    const tunnelBoost = params.inTunnel ? 1.45 : 1.0;
+
+    if (vType === 'ev') {
+      // Silence combustion + turbo, play sleek EV dual-inverter whine & regen tone
+      this.engineGain?.gain.setTargetAtTime(0, now, 0.05);
+      this.turboGain?.gain.setTargetAtTime(0, now, 0.05);
+
+      const evBaseFreq = 135 + speedRatio * 1480 + params.throttle * 95 - brakeInput * speedRatio * 140;
+      const evVol =
+        (absSpeedKmh > 0.6 ? 0.032 + speedRatio * 0.065 + params.throttle * 0.045 + brakeInput * speedRatio * 0.05 : 0) *
+        (params.inTunnel ? 1.25 : 1.0);
+      this.evOsc1?.frequency.setTargetAtTime(Math.max(80, evBaseFreq), now, 0.035);
+      this.evOsc2?.frequency.setTargetAtTime(Math.max(160, evBaseFreq * 2.02), now, 0.035);
+      this.evGain?.gain.setTargetAtTime(evVol, now, 0.045);
+    } else if (vType === 'bike') {
+      this.evGain?.gain.setTargetAtTime(0, now, 0.05);
+      const rpmNorm = Math.max(0, Math.min(1, (params.rpm - 1350) / 13150));
+      const baseFreq = 68 + rpmNorm * 320;
+      this.engineOsc1?.frequency.setTargetAtTime(baseFreq, now, 0.025);
+      this.engineOsc2?.frequency.setTargetAtTime(baseFreq * 2.0, now, 0.025);
+      this.engineSub?.frequency.setTargetAtTime(baseFreq * 0.5, now, 0.025);
+
+      const cutoff = (420 + rpmNorm * 2200 + params.throttle * 820) * (params.inTunnel ? 1.25 : 1.0);
+      this.engineFilter?.frequency.setTargetAtTime(cutoff, now, 0.035);
+
+      const engVol = (0.085 + params.throttle * 0.13 + rpmNorm * 0.095) * tunnelBoost;
+      this.engineGain?.gain.setTargetAtTime(engVol, now, 0.04);
+      this.turboGain?.gain.setTargetAtTime(0, now, 0.05);
+    } else {
+      this.evGain?.gain.setTargetAtTime(0, now, 0.05);
+      const rpmNorm = Math.max(0, Math.min(1, (params.rpm - 1000) / 7500));
+      const baseFreq = 42 + rpmNorm * 178;
+
+      this.engineOsc1?.frequency.setTargetAtTime(baseFreq, now, 0.03);
+      this.engineOsc2?.frequency.setTargetAtTime(baseFreq * 1.5, now, 0.03);
+      this.engineSub?.frequency.setTargetAtTime(baseFreq * 0.5, now, 0.03);
+
+      const cutoff = (260 + rpmNorm * 1400 + params.throttle * 650) * (params.inTunnel ? 1.25 : 1.0);
+      this.engineFilter?.frequency.setTargetAtTime(cutoff, now, 0.04);
+
+      const engVol = (0.09 + params.throttle * 0.14 + rpmNorm * 0.08) * tunnelBoost;
+      this.engineGain?.gain.setTargetAtTime(engVol, now, 0.05);
+
+      // Turbo spool
+      const turboFreq = 1600 + rpmNorm * 3200;
+      const turboVol = Math.max(0, (rpmNorm - 0.35) * params.throttle) * 0.035;
+      this.turboOsc?.frequency.setTargetAtTime(turboFreq, now, 0.05);
+      this.turboGain?.gain.setTargetAtTime(turboVol, now, 0.06);
+    }
+
+    // Wind rush scales strongly above 100 km/h (bikes experience slightly stronger wind)
+    const windMult = vType === 'bike' ? 1.2 : 1.0;
+    const windVol = Math.pow(speedRatio, 1.8) * 0.24 * windMult * (params.inTunnel ? 1.3 : 1.0);
     this.windFilter?.frequency.setTargetAtTime(280 + speedRatio * 950, now, 0.06);
     this.windGain?.gain.setTargetAtTime(windVol, now, 0.06);
 
@@ -283,7 +344,6 @@ export class HighwayAudioEngine {
     this.screechGain?.gain.setTargetAtTime(screechVol, now, 0.04);
 
     // Brake friction sound (distinct hydraulic pad bite + high rotor friction while braking)
-    const brakeInput = Math.max(0, Math.min(1, params.brake ?? 0));
     const brakeMovingFactor = Math.max(0, Math.min(1, absSpeedKmh / 22));
     const brakeStrength = brakeInput * (0.25 + 0.75 * brakeMovingFactor) * (absSpeedKmh > 1.2 ? 1 : 0);
     this.brakeLowFilter?.frequency.setTargetAtTime(280 + speedRatio * 480, now, 0.04);
@@ -291,10 +351,10 @@ export class HighwayAudioEngine {
     this.brakeRaspFilter?.frequency.setTargetAtTime(1400 + speedRatio * 1450, now, 0.04);
     this.brakeRaspGain?.gain.setTargetAtTime(brakeStrength * 0.065 * tunnelBoost, now, 0.035);
 
-    // Reverse gear straight-cut gear whine
-    const revSpeedRatio = params.isReversing ? Math.max(0, Math.min(1, absSpeedKmh / 40)) : 0;
+    // Reverse gear straight-cut gear whine (silent on EV)
+    const revSpeedRatio = params.isReversing && vType !== 'ev' ? Math.max(0, Math.min(1, absSpeedKmh / 40)) : 0;
     const revFreq = 390 + revSpeedRatio * 560;
-    const revVol = params.isReversing && absSpeedKmh > 0.8 ? 0.025 + revSpeedRatio * 0.045 : 0;
+    const revVol = params.isReversing && vType !== 'ev' && absSpeedKmh > 0.8 ? 0.025 + revSpeedRatio * 0.045 : 0;
     this.reverseOsc?.frequency.setTargetAtTime(revFreq, now, 0.04);
     this.reverseGain?.gain.setTargetAtTime(revVol, now, 0.05);
   }

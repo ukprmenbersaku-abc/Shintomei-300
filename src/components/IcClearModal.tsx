@@ -15,6 +15,7 @@ export const IcClearModal: React.FC<IcClearModalProps> = ({
 }) => {
   if (!summary) return null;
   const isJct = summary.kind === 'jct';
+  const isJctBranchDone = Boolean(summary.jctBranchCompleted);
 
   return (
     <div className="fixed inset-0 z-40 flex items-center justify-center p-3 sm:p-4 pt-safe pb-safe px-safe bg-[#05080f]/82 pointer-events-auto">
@@ -27,15 +28,25 @@ export const IcClearModal: React.FC<IcClearModalProps> = ({
             </div>
             <div>
               <div className="text-[11px] sm:text-xs font-bold tracking-wider text-emerald-100 uppercase">
-                {isJct ? 'E1A 新東名 · JCT 立体分岐通過' : 'E1A 新東名 · ETC / 料金所通過'}
+                {isJctBranchDone
+                  ? 'E1A 新東名 · 5.0km JCT連絡道 完全走破'
+                  : isJct
+                    ? 'E1A 新東名 · JCT 立体分岐通過'
+                    : 'E1A 新東名 · ETC / 料金所通過'}
               </div>
               <h2 className="text-lg sm:text-2xl font-bold text-white mt-0.5">
-                {isJct ? `${summary.icName} 分岐 — 高架ランプクリア！` : `${summary.icName} 流出 — ゴールクリア！`}
+                {isJctBranchDone
+                  ? `${summary.icName} 連絡道 — 5.0km クリア！`
+                  : isJct
+                    ? `${summary.icName} 分岐 — 高架ランプクリア！`
+                    : `${summary.icName} 流出 — ゴールクリア！`}
               </h2>
               <p className="text-xs text-emerald-100/90 mt-0.5">
-                {isJct
-                  ? `${summary.branchName} 方面連絡高架を渡り切りました（JCTクリアボーナス +1,500pts）`
-                  : `${summary.branchName} 方面出口へ到着しました（ICクリアボーナス +1,500pts）`}
+                {isJctBranchDone
+                  ? `${summary.branchName} 方面 5.0km 連絡高速道路を完走しました（JCT完全走破ボーナス +2,500pts）`
+                  : isJct
+                    ? `${summary.branchName} 方面連絡高架を渡り切りました（JCTクリアボーナス +1,500pts）`
+                    : `${summary.branchName} 方面出口へ到着しました（ICクリアボーナス +1,500pts）`}
               </p>
             </div>
           </div>
@@ -84,8 +95,8 @@ export const IcClearModal: React.FC<IcClearModalProps> = ({
                 <>
                   <span className="font-bold text-amber-300">現実のETC＆一般道ガイド：</span>
                   ゲーム内ではハイスピードのまま料金所を通過してゴールできますが、現実の ETC レーンは{' '}
-                  <strong className="text-white">時速20km以下</strong>、新東名本線は{' '}
-                  <strong className="text-white">最高120km/h</strong>、一般道は法定速度で安全運転をお願いいたします！
+                  <strong className="text-white">時速20km以下</strong>、高速本線は{' '}
+                  <strong className="text-white">原則100km/h（指定区間のみ120km/h）</strong>、一般道は法定速度で安全運転をお願いいたします！
                 </>
               )}
             </div>

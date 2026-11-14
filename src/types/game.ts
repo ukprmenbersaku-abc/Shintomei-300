@@ -1,5 +1,6 @@
 export enum WeatherMode {
   Auto = 'auto',
+  Live = 'live',
   Clear = 'clear',
   Sunset = 'sunset',
   Night = 'night',
@@ -13,6 +14,15 @@ export enum ActiveWeather {
   Night = 'night',
   Rain = 'rain',
   Fog = 'fog',
+}
+
+export interface LiveWeatherInfo {
+  locationLabel: string;
+  weatherLabelJa: string;
+  temperatureC: number;
+  mappedWeather: ActiveWeather;
+  source: 'geolocation' | 'shintomei' | 'fallback';
+  updatedAt: number;
 }
 
 export enum CameraMode {
@@ -34,6 +44,8 @@ export enum QualityMode {
 
 export type DeviceMode = 'pc' | 'mobile';
 
+export type VehicleType = 'car' | 'bike' | 'ev';
+
 export enum CarPaintId {
   ChampionshipWhite = 'white',
   BaysideBlue = 'blue',
@@ -51,9 +63,10 @@ export enum TrafficArchetype {
 }
 
 export interface TelemetrySnapshot {
+  vehicleType: VehicleType;
   speedKmh: number;
   rpm: number;
-  gear: number; // 0 = N, -1 = R, 1..6 = forward
+  gear: number; // 0 = N/P, -1 = R, 1..6 = forward (or D for EV)
   throttle: number; // 0..1
   brake: number; // 0..1
   steerAngle: number; // -1..1
@@ -75,10 +88,13 @@ export interface TelemetrySnapshot {
   nextMilestoneDistM: number;
   nextMilestoneFeature?: string;
   inSaApron: boolean;
+  inFreePlaza: boolean;
   activeFacilityKind: 'sa' | 'pa' | null;
   inMergeLane: boolean;
   inIcRamp: boolean;
   inJctRamp: boolean;
+  inJctBranch: boolean;
+  jctBranchRemainingM: number;
   inParkingBay: boolean;
   isParked: boolean;
   isSpeedLimited: boolean;
@@ -90,6 +106,7 @@ export interface TelemetrySnapshot {
 
 export interface IcClearSummary {
   kind?: 'ic' | 'jct';
+  jctBranchCompleted?: boolean;
   icName: string;
   branchName: string;
   distanceKm: number;

@@ -38,8 +38,9 @@ export const LegalGuideModal: React.FC<LegalGuideModalProps> = ({ isOpen, onClos
               <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
               <div>
                 <span className="font-bold text-white">新東名の実際の最高速度：</span>
-                御殿場JCT〜浜松いなさJCTの一部区間は <span className="tabular-nums font-bold">120 km/h</span>
-                （大型トラック等は <span className="tabular-nums">80〜90 km/h</span>、通常区間は <span className="tabular-nums">100 km/h</span>）。
+                高速道路の原則は <span className="tabular-nums font-bold">100 km/h</span> で、御殿場JCT〜浜松いなさJCTの指定区間のみ最高{' '}
+                <span className="tabular-nums font-bold">120 km/h</span>
+                （大型貨物等は <span className="tabular-nums">90 km/h</span>）です。
               </div>
             </div>
             <div className="flex items-start gap-2.5">
