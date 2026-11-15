@@ -25,6 +25,8 @@ import {
   HUMOROUS_SAFETY_TIPS,
   JCT_BRANCH_LENGTH_M,
   LED_BOARD_MESSAGES,
+  ROUTE_START_KM_POST,
+  ROUTE_TOTAL_LENGTH_M,
   RouteMilestone,
   TRAFFIC_PRESETS,
   TRAFFIC_SPECS,
@@ -308,10 +310,11 @@ export class HighwayEngine {
   private trafficDensity: TrafficDensity = TrafficDensity.Realistic;
 
   // Quality, Device & Weather State
-  private qualityMode: QualityMode = QualityMode.Ultra;
+  private qualityMode: QualityMode = QualityMode.Standard;
   private deviceMode: DeviceMode = 'pc';
   private analogSteer: number | null = null;
   private shiftFlameTimer = 0;
+  private shiftCutTimer = 0;
   private brakeGlow = 0;
   private running = false;
   private attractMode = true;
@@ -459,9 +462,9 @@ export class HighwayEngine {
 
     const w = container.clientWidth || window.innerWidth;
     const h = container.clientHeight || window.innerHeight;
-    this.renderer.setPixelRatio(this.isSoftwareGl ? 1 : Math.min(window.devicePixelRatio, 2.5));
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.0));
     this.renderer.setSize(w, h);
-    this.renderer.shadowMap.enabled = !this.isSoftwareGl;
+    this.renderer.shadowMap.enabled = false;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
     const canvas = this.renderer.domElement;
@@ -492,8 +495,8 @@ export class HighwayEngine {
     this.scene.add(this.hemiLight);
 
     this.sunLight = new THREE.DirectionalLight(0xfff4e0, 2.9);
-    this.sunLight.castShadow = !this.isSoftwareGl;
-    const shadowSize = this.isSoftwareGl ? 512 : 4096;
+    this.sunLight.castShadow = false;
+    const shadowSize = this.isSoftwareGl ? 512 : 1024;
     this.sunLight.shadow.mapSize.width = shadowSize;
     this.sunLight.shadow.mapSize.height = shadowSize;
     this.sunLight.shadow.radius = 2.4;
@@ -546,11 +549,7 @@ export class HighwayEngine {
     this.initTrafficPools();
     this.resetTrafficPositions();
 
-    // Ultra-HD Post-Processing Composer (Hardware GPU only)
-    if (!this.isSoftwareGl) {
-      this.initComposer(w, h);
-      this.renderer.compile(this.scene, this.camera);
-    }
+    // Defer Ultra-HD EffectComposer & 4x MSAA HalfFloat target until QualityMode.Ultra is enabled so startup stays fast & light.
 
     window.addEventListener('resize', this.handleResize);
     window.addEventListener('orientationchange', this.handleOrientationChange);
@@ -820,6 +819,8 @@ export class HighwayEngine {
   public setQualityMode(mode: QualityMode): void {
     this.qualityMode = mode;
     if (!this.isSoftwareGl) {
+      const w = this.container.clientWidth || window.innerWidth;
+      const h = this.container.clientHeight || window.innerHeight;
       const maxDpr = this.deviceMode === 'mobile' ? 2.0 : 2.5;
       const targetRatio =
         mode === QualityMode.Ultra
@@ -838,6 +839,13 @@ export class HighwayEngine {
         this.sunLight.shadow.map = null;
       }
 
+      if (mode === QualityMode.Ultra) {
+        if (!this.composer) {
+          this.initComposer(w, h);
+        }
+        this.envRebuildTimer = 999;
+      }
+
       if (prevShadows !== nextShadows) {
         if (nextShadows) {
           this.renderer.shadowMap.needsUpdate = true;
@@ -852,12 +860,13 @@ export class HighwayEngine {
         });
       }
 
-      const w = this.container.clientWidth || window.innerWidth;
-      const h = this.container.clientHeight || window.innerHeight;
       this.renderer.setSize(w, h);
       if (this.composer) {
         this.composer.setPixelRatio(targetRatio);
         this.composer.setSize(w, h);
+      }
+      if (this.bloomPass) {
+        this.bloomPass.resolution.set(w, h);
       }
     }
   }
@@ -910,6 +919,7 @@ export class HighwayEngine {
     this.playerLatVel = 0;
     this.playerRelYaw = 0;
     this.playerSteer = 0;
+    this.shiftCutTimer = 0;
     this.playerGear = VEHICLE_SPECS[this.vehicleType].IS_DIRECT_DRIVE ? 1 : 4;
     this.isReversing = false;
     this.reverseHoldTimer = 0;
@@ -948,6 +958,7 @@ export class HighwayEngine {
     this.playerLaneOffset = -3.75;
     this.playerLatVel = 0;
     this.playerRelYaw = 0;
+    this.shiftCutTimer = 0;
     this.inFreePlaza = false;
     this.plazaHeading = 0;
     this.playerSpeedMs = Math.max(25, Math.min(this.playerSpeedMs, 140 / 3.6));
@@ -972,6 +983,7 @@ export class HighwayEngine {
     this.playerLaneOffset = -3.75;
     this.playerLatVel = 0;
     this.playerRelYaw = 0;
+    this.shiftCutTimer = 0;
     this.inFreePlaza = false;
     this.plazaHeading = 0;
     this.playerSpeedMs = 120 / 3.6;
@@ -1096,6 +1108,10 @@ export class HighwayEngine {
     } else if (this.attractMode) {
       const attractSpeedMs = 120 / 3.6;
       this.attractS += attractSpeedMs * frameDt;
+      if (this.attractS > ROUTE_TOTAL_LENGTH_M - 450) {
+        this.attractS = 40;
+        this.resetTrafficPositions(this.attractS);
+      }
       this.stepWeather(frameDt, true, this.attractS);
       this.syncAttractCarTransform(frameDt, attractSpeedMs);
       this.stepTraffic(frameDt, this.attractS, false);
@@ -1457,21 +1473,39 @@ export class HighwayEngine {
       if (this.playerGear < 1) this.playerGear = 1;
       const speedMs = Math.max(0, this.playerSpeedMs);
       const speedKmh = speedMs * 3.6;
+      const isBike = this.vehicleType === 'bike';
 
-      let torqueCurve = 1.0;
-      let gearMultiplier = 1.0;
+      let driveForce = 0;
+      let regenOrEngineBrakeForce = 0;
+
+      effectiveThrottle = throttle;
+      if (speedKmh >= spec.MAX_SPEED_KMH - 0.5) {
+        effectiveThrottle = 0;
+      } else if (speedKmh > spec.MAX_SPEED_KMH - 6) {
+        effectiveThrottle *= (spec.MAX_SPEED_KMH - speedKmh) / 6;
+      }
 
       if (spec.IS_DIRECT_DRIVE) {
+        // EV Hypercar: 1-speed direct drive with instant peak torque off the line (0-120 km/h),
+        // zero gearshift interruption, constant-power tapering at high speeds, and strong regen braking.
         this.playerGear = 1;
+        this.shiftCutTimer = 0;
         const targetRpm = THREE.MathUtils.clamp(
           spec.IDLE_RPM + (speedMs / spec.MAX_SPEED_MS) * (spec.REDLINE_RPM - spec.IDLE_RPM),
           spec.IDLE_RPM,
           spec.REDLINE_RPM,
         );
-        this.playerRpm = THREE.MathUtils.damp(this.playerRpm, targetRpm, 16, dt);
-        torqueCurve = speedKmh < 110 ? 1.28 : Math.max(0.76, 1.18 - 0.36 * ((speedKmh - 110) / 190));
-        gearMultiplier = 1.0;
+        this.playerRpm = THREE.MathUtils.damp(this.playerRpm, targetRpm, 18, dt);
+
+        const evPowerW = 205000; // ~278 PS sustained electric power above base speed (20 m/s = 72 km/h)
+        const baseForce = speedMs > 20 ? Math.min(spec.MAX_ENGINE_FORCE_N, evPowerW / speedMs) : spec.MAX_ENGINE_FORCE_N;
+        driveForce = effectiveThrottle * baseForce * (slipstream ? 1.1 : 1.0);
+
+        if (throttle === 0 && brake === 0 && speedMs > 1.0) {
+          regenOrEngineBrakeForce = spec.MASS_KG * (0.55 + 0.4 * Math.min(1, speedMs / 30));
+        }
       } else {
+        // ICE Sports Car / Superbike: multi-gear transmission, distinct RPM torque band, brief shift-cut on car upshifts
         const wheelAngular = speedMs / spec.WHEEL_RADIUS_M;
         const ratio = spec.GEAR_RATIOS[this.playerGear - 1] * spec.FINAL_DRIVE;
         let targetRpm = (wheelAngular * ratio * 60) / (2 * Math.PI);
@@ -1483,29 +1517,44 @@ export class HighwayEngine {
         } else if (targetRpm <= spec.SHIFT_DOWN_RPM && this.playerGear > 1) {
           this.playerGear--;
         }
-        if (this.playerGear > prevGear && this.qualityMode === QualityMode.Ultra) {
-          this.shiftFlameTimer = 0.16;
+        if (this.playerGear > prevGear) {
+          if (!isBike) {
+            this.shiftCutTimer = 0.085;
+          }
+          if (this.qualityMode === QualityMode.Ultra) {
+            this.shiftFlameTimer = 0.16;
+          }
+        }
+        if (this.shiftCutTimer > 0) {
+          this.shiftCutTimer = Math.max(0, this.shiftCutTimer - dt);
+          effectiveThrottle *= 0.18;
         }
         this.playerRpm = THREE.MathUtils.damp(this.playerRpm, targetRpm, 12, dt);
 
-        const rpmNorm = (this.playerRpm - spec.IDLE_RPM) / Math.max(1, spec.REDLINE_RPM - spec.IDLE_RPM);
-        torqueCurve = 0.68 + 0.45 * Math.sin(Math.min(1, Math.max(0, rpmNorm)) * Math.PI * 0.88);
-        gearMultiplier = spec.GEAR_RATIOS[this.playerGear - 1] / 1.4;
+        const rpmNorm = THREE.MathUtils.clamp(
+          (this.playerRpm - spec.IDLE_RPM) / Math.max(1, spec.REDLINE_RPM - spec.IDLE_RPM),
+          0,
+          1,
+        );
+        const torqueCurve = isBike
+          ? 0.68 + 0.45 * Math.sin(rpmNorm * Math.PI * 0.88)
+          : 0.58 + 0.54 * Math.pow(Math.sin(rpmNorm * Math.PI * 0.85), 0.85);
+        const gearMultiplier = isBike
+          ? Math.min(2.15, spec.GEAR_RATIOS[this.playerGear - 1] / 1.4)
+          : Math.min(2.35, spec.GEAR_RATIOS[this.playerGear - 1] / 1.12);
+
+        driveForce =
+          effectiveThrottle *
+          spec.MAX_ENGINE_FORCE_N *
+          torqueCurve *
+          gearMultiplier *
+          (slipstream ? 1.12 : 1.0);
+
+        if (throttle === 0 && brake === 0 && speedMs > 1.0) {
+          regenOrEngineBrakeForce = spec.MASS_KG * (0.14 + 0.24 * rpmNorm);
+        }
       }
 
-      effectiveThrottle = throttle;
-      if (speedKmh >= spec.MAX_SPEED_KMH - 0.5) {
-        effectiveThrottle = 0;
-      } else if (speedKmh > spec.MAX_SPEED_KMH - 6) {
-        effectiveThrottle *= (spec.MAX_SPEED_KMH - speedKmh) / 6;
-      }
-
-      const driveForce =
-        effectiveThrottle *
-        spec.MAX_ENGINE_FORCE_N *
-        torqueCurve *
-        Math.min(2.15, gearMultiplier) *
-        (slipstream ? 1.12 : 1.0);
       const dragFactor = slipstream ? 0.78 : 1.0;
       const aeroDrag = 0.5 * spec.AIR_DENSITY * spec.DRAG_COEFF_AREA * speedMs * speedMs * dragFactor;
       const rollingDrag = spec.MASS_KG * 9.81 * spec.ROLLING_RESISTANCE;
@@ -1522,7 +1571,8 @@ export class HighwayEngine {
       const actualBrake = Math.min(requestedBrake, maxTireForce);
       absActive = brake > 0.5 && requestedBrake > maxTireForce * 0.92 && speedKmh > 35;
 
-      const netLongForce = driveForce - aeroDrag - rollingDrag - slopeGravity - actualBrake;
+      const netLongForce =
+        driveForce - aeroDrag - rollingDrag - slopeGravity - actualBrake - regenOrEngineBrakeForce;
       accelLong = netLongForce / spec.MASS_KG;
 
       this.playerSpeedMs = THREE.MathUtils.clamp(
@@ -1532,7 +1582,7 @@ export class HighwayEngine {
       );
 
       brakeAudioAmt = brake;
-      brakeTailActive = brake > 0.1;
+      brakeTailActive = brake > 0.1 || (spec.IS_DIRECT_DRIVE && regenOrEngineBrakeForce > spec.MASS_KG * 0.75);
     }
 
     const absSpeedMs = Math.abs(this.playerSpeedMs);
@@ -1561,7 +1611,7 @@ export class HighwayEngine {
     }
 
     // Precision asymmetric steering ramp: micro-taps on bike yield tiny surgical adjustments,
-    // sustained holds reach full cornering smoothly, and release snaps upright cleanly.
+    // while cars have weighted rack damping + progressive steering response & friction-circle grip coupling.
     const isBike = this.vehicleType === 'bike';
     const isReleasingOrCounter =
       Math.abs(steerInput) < 0.05 ||
@@ -1572,15 +1622,16 @@ export class HighwayEngine {
         ? 14.5
         : 4.6
       : isReleasingOrCounter
-        ? 12.5
-        : 9.0;
+        ? 10.5
+        : 5.4;
     this.playerSteer = THREE.MathUtils.damp(this.playerSteer, steerInput, steerLambda, dt);
     const steerAbs = Math.abs(this.playerSteer);
     const shapedSteer = isBike
       ? Math.sign(this.playerSteer) * Math.pow(steerAbs, 1.55)
-      : this.playerSteer;
+      : Math.sign(this.playerSteer) * Math.pow(steerAbs, 1.25);
 
     const steerRollAuthority = THREE.MathUtils.clamp(absSpeedMs / 8.5, 0, 1);
+    const combinedGrip = isBike ? 1.0 : Math.sqrt(Math.max(0.28, 1 - 0.52 * brake * brake));
 
     // Check SA/PA Plaza Free-Roam entry
     if (!this.jctState && !this.inFreePlaza) {
@@ -1596,11 +1647,18 @@ export class HighwayEngine {
       // Phase 1: Curved Elevated JCT Overpass Viaduct -> seamlessly enters Phase 2 (5,000m JCT Highway)
       const highSpeedStab = isBike
         ? THREE.MathUtils.lerp(1.0, 0.72, THREE.MathUtils.clamp((curAbsKmh - 100) / 200, 0, 1))
-        : THREE.MathUtils.lerp(1.0, 0.88, THREE.MathUtils.clamp((curAbsKmh - 120) / 180, 0, 1));
-      const maxLatSpeed = (isBike ? 10.2 : 11.4) * spec.STEER_AUTHORITY * Math.sqrt(roadFriction) * highSpeedStab;
+        : THREE.MathUtils.lerp(1.0, 0.56, THREE.MathUtils.clamp((curAbsKmh - 60) / 240, 0, 1));
+      const maxLatSpeed =
+        (isBike ? 10.2 : 6.8) * spec.STEER_AUTHORITY * Math.sqrt(roadFriction) * highSpeedStab * combinedGrip;
       const desiredLatVel = shapedSteer * steerRollAuthority * maxLatSpeed;
       const latGripLambda =
-        absSpeedMs < 0.25 ? 20 : isBike ? (Math.abs(desiredLatVel) < 0.2 ? 11.5 : 7.5) * roadFriction : 5.5 * roadFriction;
+        absSpeedMs < 0.25
+          ? isBike
+            ? 20
+            : 18
+          : isBike
+            ? (Math.abs(desiredLatVel) < 0.2 ? 11.5 : 7.5) * roadFriction
+            : 4.6 * roadFriction * combinedGrip;
       this.playerLatVel = THREE.MathUtils.damp(this.playerLatVel, desiredLatVel, latGripLambda, dt);
       if (absSpeedMs < 0.08 && Math.abs(this.playerLatVel) < 0.05) this.playerLatVel = 0;
 
@@ -1711,18 +1769,25 @@ export class HighwayEngine {
       // Standard Mainline / Deceleration / Merge / IC Ramp / JCT 5km Branch Highway Kinematics
       const highSpeedStab = isBike
         ? THREE.MathUtils.lerp(1.0, 0.72, THREE.MathUtils.clamp((curAbsKmh - 100) / 200, 0, 1))
-        : THREE.MathUtils.lerp(1.0, 0.88, THREE.MathUtils.clamp((curAbsKmh - 120) / 180, 0, 1));
-      const maxLatSpeed = (isBike ? 10.2 : 11.4) * spec.STEER_AUTHORITY * Math.sqrt(roadFriction) * highSpeedStab;
+        : THREE.MathUtils.lerp(1.0, 0.56, THREE.MathUtils.clamp((curAbsKmh - 60) / 240, 0, 1));
+      const maxLatSpeed =
+        (isBike ? 10.2 : 6.8) * spec.STEER_AUTHORITY * Math.sqrt(roadFriction) * highSpeedStab * combinedGrip;
       const desiredLatVel = shapedSteer * steerRollAuthority * maxLatSpeed;
 
       const dsStep = 2.0;
       const dx1 = roadCenterDX(this.playerS);
       const dx2 = roadCenterDX(this.playerS + dsStep);
       const curvature = (dx2 - dx1) / dsStep;
-      const centrifugalPush = curvature * this.playerSpeedMs * absSpeedMs * (isBike ? 0.34 : 0.48);
+      const centrifugalPush = curvature * this.playerSpeedMs * absSpeedMs * (isBike ? 0.34 : 0.52);
 
       const latGripLambda =
-        absSpeedMs < 0.25 ? 20 : isBike ? (Math.abs(desiredLatVel) < 0.2 ? 11.5 : 7.5) * roadFriction : 5.5 * roadFriction;
+        absSpeedMs < 0.25
+          ? isBike
+            ? 20
+            : 18
+          : isBike
+            ? (Math.abs(desiredLatVel) < 0.2 ? 11.5 : 7.5) * roadFriction
+            : 4.6 * roadFriction * combinedGrip;
       this.playerLatVel = THREE.MathUtils.damp(
         this.playerLatVel,
         desiredLatVel - centrifugalPush * 0.25,
@@ -1909,6 +1974,27 @@ export class HighwayEngine {
           this.playerLatVel = Math.min(0, -this.playerLatVel * 0.35);
           this.playerSpeedMs *= 0.985;
         }
+
+        if (this.playerS >= ROUTE_TOTAL_LENGTH_M && Math.abs(this.playerS - this.icClearTriggeredForS) > 300) {
+          this.icClearTriggeredForS = this.playerS;
+          this.playerS = ROUTE_TOTAL_LENGTH_M;
+          this.playerSpeedMs = 0;
+          this.playerLatVel = 0;
+          this.score += 5000;
+          this.audio.playChime('nearMiss');
+          this.running = false;
+          this.onIcExitClear?.({
+            kind: 'jct',
+            icName: '浜松いなさJCT（新東名 全線走破）',
+            branchName: '伊勢原JCT〜浜松いなさJCT 実距離212km完走',
+            distanceKm: this.distanceM / 1000,
+            maxSpeedKmh: this.maxSpeedKmh,
+            overtakeCount: this.overtakeCount,
+            nearMissCount: this.nearMissCount,
+            score: this.score,
+            routeCompleted: true,
+          });
+        }
       }
     }
 
@@ -1916,7 +2002,9 @@ export class HighwayEngine {
       this.playerRelYaw = this.plazaHeading;
     } else {
       const yawReverseSign = this.playerSpeedMs >= -0.05 ? 1 : -1;
-      const targetRelYaw = -this.playerLatVel * 0.018 * yawReverseSign;
+      const targetRelYaw = isBike
+        ? -this.playerLatVel * 0.018 * yawReverseSign
+        : Math.atan2(-this.playerLatVel, Math.max(8.5, absSpeedMs)) * 0.88 * yawReverseSign;
       this.playerRelYaw = THREE.MathUtils.damp(this.playerRelYaw, targetRelYaw, 10, dt);
     }
 
@@ -1929,7 +2017,7 @@ export class HighwayEngine {
               -1,
               1,
             )) * spec.MAX_ROLL_RAD
-      : (this.playerLatVel / 10) * spec.MAX_ROLL_RAD;
+      : (this.playerLatVel / 6.5) * spec.MAX_ROLL_RAD;
     this.playerPitch = THREE.MathUtils.damp(this.playerPitch, targetPitch, 9, dt);
     this.playerRoll = THREE.MathUtils.damp(this.playerRoll, targetRoll, isBike ? 7.5 : 9, dt);
 
@@ -2573,7 +2661,7 @@ export class HighwayEngine {
 
     const kmPost = inJctBranch
       ? this.playerS / 1000
-      : nextM.milestone.realKmPost - nextM.distM / 1000;
+      : ROUTE_START_KM_POST + this.playerS / 1000;
     const activeFacilityKind =
       offBounds.activeSa && (offBounds.inSaApron || offBounds.inMergeLane)
         ? (offBounds.activeSa.type as 'sa' | 'pa')

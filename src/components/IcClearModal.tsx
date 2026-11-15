@@ -16,6 +16,7 @@ export const IcClearModal: React.FC<IcClearModalProps> = ({
   if (!summary) return null;
   const isJct = summary.kind === 'jct';
   const isJctBranchDone = Boolean(summary.jctBranchCompleted);
+  const isRouteCompleted = Boolean(summary.routeCompleted);
 
   return (
     <div className="fixed inset-0 z-40 flex items-center justify-center p-3 sm:p-4 pt-safe pb-safe px-safe bg-[#05080f]/82 pointer-events-auto">
@@ -28,25 +29,31 @@ export const IcClearModal: React.FC<IcClearModalProps> = ({
             </div>
             <div>
               <div className="text-[11px] sm:text-xs font-bold tracking-wider text-emerald-100 uppercase">
-                {isJctBranchDone
-                  ? 'E1A 新東名 · 5.0km JCT連絡道 完全走破'
-                  : isJct
-                    ? 'E1A 新東名 · JCT 立体分岐通過'
-                    : 'E1A 新東名 · ETC / 料金所通過'}
+                {isRouteCompleted
+                  ? 'E1A 新東名 · 全線 212km 完全走破'
+                  : isJctBranchDone
+                    ? 'E1A 新東名 · 5.0km JCT連絡道 完全走破'
+                    : isJct
+                      ? 'E1A 新東名 · JCT 立体分岐通過'
+                      : 'E1A 新東名 · ETC / 料金所通過'}
               </div>
               <h2 className="text-lg sm:text-2xl font-bold text-white mt-0.5">
-                {isJctBranchDone
-                  ? `${summary.icName} 連絡道 — 5.0km クリア！`
-                  : isJct
-                    ? `${summary.icName} 分岐 — 高架ランプクリア！`
-                    : `${summary.icName} 流出 — ゴールクリア！`}
+                {isRouteCompleted
+                  ? '浜松いなさJCT — 新東名 全線クリア！'
+                  : isJctBranchDone
+                    ? `${summary.icName} 連絡道 — 5.0km クリア！`
+                    : isJct
+                      ? `${summary.icName} 分岐 — 高架ランプクリア！`
+                      : `${summary.icName} 流出 — ゴールクリア！`}
               </h2>
               <p className="text-xs text-emerald-100/90 mt-0.5">
-                {isJctBranchDone
-                  ? `${summary.branchName} 方面 5.0km 連絡高速道路を完走しました（JCT完全走破ボーナス +2,500pts）`
-                  : isJct
-                    ? `${summary.branchName} 方面連絡高架を渡り切りました（JCTクリアボーナス +1,500pts）`
-                    : `${summary.branchName} 方面出口へ到着しました（ICクリアボーナス +1,500pts）`}
+                {isRouteCompleted
+                  ? '伊勢原JCT〜浜松いなさJCTの実距離 約212kmをループなしで完全走破しました（全線完走ボーナス +5,000pts）'
+                  : isJctBranchDone
+                    ? `${summary.branchName} 方面 5.0km 連絡高速道路を完走しました（JCT完全走破ボーナス +2,500pts）`
+                    : isJct
+                      ? `${summary.branchName} 方面連絡高架を渡り切りました（JCTクリアボーナス +1,500pts）`
+                      : `${summary.branchName} 方面出口へ到着しました（ICクリアボーナス +1,500pts）`}
               </p>
             </div>
           </div>
@@ -84,7 +91,14 @@ export const IcClearModal: React.FC<IcClearModalProps> = ({
           <div className="rounded-xl bg-[#181f2e] border border-amber-400/40 p-3.5 flex items-start gap-3">
             <ShieldAlert className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
             <div className="text-xs sm:text-sm leading-relaxed text-slate-200">
-              {isJct ? (
+              {isRouteCompleted ? (
+                <>
+                  <span className="font-bold text-amber-300">現実の新東名（E1A）212km 完走おめでとうございます：</span>
+                  伊勢原JCTから浜松いなさJCTまで実距離と同じ配置のSA・PA・IC・JCTを駆け抜けました！実際の高速道路では
+                  <strong className="text-white">原則100km/h（御殿場JCT〜浜松いなさJCTの指定区間のみ120km/h）</strong>
+                  と2時間ごとのSA/PA休憩を守って安全運転をお楽しみください。
+                </>
+              ) : isJct ? (
                 <>
                   <span className="font-bold text-amber-300">現実のJCT分岐ガイド：</span>
                   JCTの連絡高架橋は急カーブと勾配が連続するため、現実の高速道路では{' '}
@@ -111,14 +125,16 @@ export const IcClearModal: React.FC<IcClearModalProps> = ({
               <RotateCcw className="w-4 h-4" />
               <span>最初から走る</span>
             </button>
-            <button
-              type="button"
-              onClick={onContinueMainline}
-              className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-bold flex items-center gap-1.5 transition-colors shadow-lg"
-            >
-              <Play className="w-4 h-4 fill-current" />
-              <span>本線に戻って先へ進む</span>
-            </button>
+            {!isRouteCompleted && (
+              <button
+                type="button"
+                onClick={onContinueMainline}
+                className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-bold flex items-center gap-1.5 transition-colors shadow-lg"
+              >
+                <Play className="w-4 h-4 fill-current" />
+                <span>本線に戻って先へ進む</span>
+              </button>
+            )}
           </div>
         </div>
       </div>

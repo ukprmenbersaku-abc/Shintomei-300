@@ -107,6 +107,7 @@ export interface TelemetrySnapshot {
 export interface IcClearSummary {
   kind?: 'ic' | 'jct';
   jctBranchCompleted?: boolean;
+  routeCompleted?: boolean;
   icName: string;
   branchName: string;
   distanceKm: number;

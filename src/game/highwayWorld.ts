@@ -4,7 +4,7 @@ import {
   FacilityStyleId,
   JCT_BRANCH_LENGTH_M,
   PARKING_BAY_COORDS,
-  ROUTE_LOOP_LENGTH_M,
+  ROUTE_TOTAL_LENGTH_M,
   RouteMilestone,
   SHIN_TOMEI_ROUTE,
 } from './constants';
@@ -81,18 +81,6 @@ export function roadElevationDY(s: number): number {
   return 11 * 0.0013 * Math.cos(s * 0.0013) - 4.5 * 0.0029 * Math.sin(s * 0.0029);
 }
 
-export function wrapRouteS(s: number): number {
-  return ((s % ROUTE_LOOP_LENGTH_M) + ROUTE_LOOP_LENGTH_M) % ROUTE_LOOP_LENGTH_M;
-}
-
-export function signedLoopDelta(s: number, targetLoopS: number): number {
-  const loopS = wrapRouteS(s);
-  let d = loopS - targetLoopS;
-  if (d > ROUTE_LOOP_LENGTH_M * 0.5) d -= ROUTE_LOOP_LENGTH_M;
-  if (d < -ROUTE_LOOP_LENGTH_M * 0.5) d += ROUTE_LOOP_LENGTH_M;
-  return d; // negative = approaching target, positive = past target
-}
-
 export function getMilestoneNear(
   s: number,
   halfSpan: number,
@@ -101,26 +89,22 @@ export function getMilestoneNear(
   if (activeJctBranchMilestone) return null;
   for (const m of SHIN_TOMEI_ROUTE) {
     if (typeFilter && m.type !== typeFilter) continue;
-    const ds = signedLoopDelta(s, m.sPos);
+    const ds = s - m.sPos;
     if (Math.abs(ds) <= halfSpan) {
-      return { milestone: m, ds, worldS: s - ds };
+      return { milestone: m, ds, worldS: m.sPos };
     }
   }
   return null;
 }
 
 export function getNextMilestoneAhead(s: number): { milestone: RouteMilestone; distM: number } {
-  const loopS = wrapRouteS(s);
-  let best = SHIN_TOMEI_ROUTE[0];
-  let bestDist = ROUTE_LOOP_LENGTH_M + best.sPos - loopS;
   for (const m of SHIN_TOMEI_ROUTE) {
-    const dist = m.sPos >= loopS ? m.sPos - loopS : ROUTE_LOOP_LENGTH_M - loopS + m.sPos;
-    if (dist < bestDist) {
-      bestDist = dist;
-      best = m;
+    if (m.sPos >= s) {
+      return { milestone: m, distM: m.sPos - s };
     }
   }
-  return { milestone: best, distM: bestDist };
+  const last = SHIN_TOMEI_ROUTE[SHIN_TOMEI_ROUTE.length - 1];
+  return { milestone: last, distM: Math.max(0, ROUTE_TOTAL_LENGTH_M - s) };
 }
 
 function smoothstep(edge0: number, edge1: number, x: number): number {
@@ -143,6 +127,8 @@ export interface FacilityProfile {
   goreRightX: number;
   isPlaza: boolean;
   isMergeLane: boolean;
+  terrainLeftEdgeX?: number;
+  rampCollapsed?: boolean;
 }
 
 const EMPTY_PROFILE: FacilityProfile = {
@@ -354,8 +340,9 @@ export function getFacilityProfileAt(s: number): FacilityProfile {
   }
 
   if (m.type === 'ic') {
-    if (ds < -320 || ds > 230) return EMPTY_PROFILE;
+    if (ds < -320 || ds > 255) return EMPTY_PROFILE;
 
+    let hasRamp = true;
     let outerX = EDGE;
     let innerX = LANE0_LEFT;
     let hasGuide = false;
@@ -363,13 +350,15 @@ export function getFacilityProfileAt(s: number): FacilityProfile {
     let islandLeftX = EDGE;
     let goreLeftX = 0;
     let goreRightX = 0;
+    let terrainLeftEdgeX: number | undefined;
+    let rampCollapsed = false;
 
     if (ds < -230) {
       outerX = THREE.MathUtils.lerp(EDGE, -12.8, smoothstep(-320, -230, ds));
       innerX = THREE.MathUtils.lerp(EDGE, LANE0_LEFT, smoothstep(-320, -302, ds));
       hasGuide = ds >= -312;
     } else if (ds < -165) {
-      outerX = THREE.MathUtils.lerp(-12.8, -46.5, smoothstep(-230, 15, ds) * 0.16);
+      outerX = THREE.MathUtils.lerp(-12.8, -46.5, smoothstep(-230, 15, ds));
       innerX = THREE.MathUtils.lerp(LANE0_LEFT, EDGE, smoothstep(-205, -182, ds));
       hasGuide = ds < -195;
       if (ds >= -200) {
@@ -380,7 +369,7 @@ export function getFacilityProfileAt(s: number): FacilityProfile {
       }
     } else if (ds <= 15) {
       const t = smoothstep(-165, 15, ds);
-      outerX = THREE.MathUtils.lerp(-17.8, -46.5, t);
+      outerX = THREE.MathUtils.lerp(-12.8, -46.5, smoothstep(-230, 15, ds));
       innerX = THREE.MathUtils.lerp(-10.875, -24.5, t);
       hasIsland = true;
       islandLeftX = innerX;
@@ -389,18 +378,37 @@ export function getFacilityProfileAt(s: number): FacilityProfile {
       innerX = -24.5;
       hasIsland = true;
       islandLeftX = innerX;
-    } else {
-      const t = smoothstep(75, 230, ds);
-      outerX = THREE.MathUtils.lerp(-46.5, -68.0, t);
-      innerX = THREE.MathUtils.lerp(-24.5, -50.0, t);
-      hasIsland = ds < 130;
+    } else if (ds <= 200) {
+      const t = smoothstep(75, 200, ds);
+      outerX = THREE.MathUtils.lerp(-46.5, -72.0, t);
+      innerX = THREE.MathUtils.lerp(-24.5, -58.0, t);
+      hasIsland = true;
       islandLeftX = innerX;
+    } else {
+      // Smoothly terminate the IC exit road inside the far-left exit portal/berm (ds = 200..210)
+      // while keeping the separator embankment & hillside seamlessly closed back to the mainline shoulder (ds = 200..255).
+      const tClose = smoothstep(200, 255, ds);
+      hasIsland = true;
+      islandLeftX = THREE.MathUtils.lerp(-58.0, EDGE, tClose);
+      terrainLeftEdgeX = THREE.MathUtils.lerp(-72.5, -8.6, tClose);
+
+      if (ds <= 210) {
+        const tc = (ds - 200) / 10;
+        outerX = THREE.MathUtils.lerp(-72.0, -65.0, tc);
+        innerX = THREE.MathUtils.lerp(-58.0, -65.0, tc);
+        rampCollapsed = ds >= 210;
+      } else {
+        hasRamp = false;
+        outerX = EDGE;
+        innerX = EDGE;
+        rampCollapsed = ds <= 215;
+      }
     }
 
     return {
       milestone: m,
       ds,
-      hasRamp: true,
+      hasRamp,
       outerX,
       innerX,
       facilityY: mainY,
@@ -412,11 +420,15 @@ export function getFacilityProfileAt(s: number): FacilityProfile {
       goreRightX,
       isPlaza: false,
       isMergeLane: false,
+      terrainLeftEdgeX,
+      rampCollapsed,
     };
   }
 
-  // JCT: left deceleration lane peeling smoothly into elevated JCT viaduct at ds = -150..-80
-  if (ds < -300 || ds > -80) return EMPTY_PROFILE;
+  // JCT: left deceleration lane peeling smoothly into elevated JCT viaduct at ds = -150..-90,
+  // with smooth terrain/island closure back to the mainline shoulder underneath the viaduct.
+  if (ds < -300 || ds > -45) return EMPTY_PROFILE;
+  let hasRamp = true;
   let outerX = EDGE;
   let innerX = LANE0_LEFT;
   let hasGuide = false;
@@ -424,6 +436,8 @@ export function getFacilityProfileAt(s: number): FacilityProfile {
   let islandLeftX = EDGE;
   let goreLeftX = 0;
   let goreRightX = 0;
+  let terrainLeftEdgeX: number | undefined;
+  let rampCollapsed = false;
 
   if (ds < -210) {
     outerX = THREE.MathUtils.lerp(EDGE, -12.6, smoothstep(-300, -210, ds));
@@ -439,18 +453,35 @@ export function getFacilityProfileAt(s: number): FacilityProfile {
       goreLeftX = EDGE - gt * 2.2;
       innerX = Math.min(innerX, goreLeftX);
     }
-  } else {
-    const t = smoothstep(-150, -80, ds);
-    outerX = THREE.MathUtils.lerp(-16.5, -26.2, t);
-    innerX = THREE.MathUtils.lerp(-10.575, -17.8, t);
+  } else if (ds <= -95) {
+    const t = smoothstep(-150, -95, ds);
+    outerX = THREE.MathUtils.lerp(-16.5, -24.8, t);
+    innerX = THREE.MathUtils.lerp(-10.575, -16.8, t);
     hasIsland = true;
     islandLeftX = innerX;
+  } else {
+    const tClose = smoothstep(-95, -45, ds);
+    hasIsland = true;
+    islandLeftX = THREE.MathUtils.lerp(-16.8, EDGE, tClose);
+    terrainLeftEdgeX = THREE.MathUtils.lerp(-25.3, -8.6, tClose);
+
+    if (ds <= -90) {
+      const tc = (ds + 95) / 5;
+      outerX = THREE.MathUtils.lerp(-24.8, -20.8, tc);
+      innerX = THREE.MathUtils.lerp(-16.8, -20.8, tc);
+      rampCollapsed = ds >= -90;
+    } else {
+      hasRamp = false;
+      outerX = EDGE;
+      innerX = EDGE;
+      rampCollapsed = ds <= -85;
+    }
   }
 
   return {
     milestone: m,
     ds,
-    hasRamp: true,
+    hasRamp,
     outerX,
     innerX,
     facilityY: mainY,
@@ -462,6 +493,8 @@ export function getFacilityProfileAt(s: number): FacilityProfile {
     goreRightX,
     isPlaza: false,
     isMergeLane: false,
+    terrainLeftEdgeX,
+    rampCollapsed,
   };
 }
 
@@ -1970,40 +2003,52 @@ export class HighwayWorld {
         this.jctEndGate.visible = false;
       }
     } else {
-      this.jctEndGate.visible = false;
-      const baseLoopStart = Math.floor(minS / ROUTE_LOOP_LENGTH_M) * ROUTE_LOOP_LENGTH_M;
-      for (let lapOff = 0; lapOff <= ROUTE_LOOP_LENGTH_M; lapOff += ROUTE_LOOP_LENGTH_M) {
-        for (const m of SHIN_TOMEI_ROUTE) {
-          const ms = baseLoopStart + lapOff + m.sPos;
-          if (ms < minS - 460 || ms > maxS + 460) continue;
+      if (ROUTE_TOTAL_LENGTH_M >= minS - 80 && ROUTE_TOTAL_LENGTH_M <= maxS + 80) {
+        this.jctEndGate.visible = true;
+        this.jctEndGate.position.set(
+          roadCenterX(ROUTE_TOTAL_LENGTH_M),
+          roadElevationY(ROUTE_TOTAL_LENGTH_M),
+          -ROUTE_TOTAL_LENGTH_M,
+        );
+        this.jctEndGate.rotation.set(
+          Math.atan(roadElevationDY(ROUTE_TOTAL_LENGTH_M)),
+          -Math.atan2(roadCenterDX(ROUTE_TOTAL_LENGTH_M), 1),
+          0,
+        );
+      } else {
+        this.jctEndGate.visible = false;
+      }
 
-          const mx = roadCenterX(ms);
-          const my = roadElevationY(ms);
-          const mYaw = -Math.atan2(roadCenterDX(ms), 1);
-          const mPitch = Math.atan(roadElevationDY(ms));
+      for (const m of SHIN_TOMEI_ROUTE) {
+        const ms = m.sPos;
+        if (ms < minS - 460 || ms > maxS + 460) continue;
 
-          const facilityGrp = this.facilityMap.get(m.styleId);
-          if (facilityGrp) {
-            facilityGrp.visible = true;
-            if (m.type === 'sa' || m.type === 'pa') {
-              const lift = m.type === 'sa' ? 2.2 : 1.2;
-              facilityGrp.position.set(mx, my + lift, -ms);
-              facilityGrp.rotation.set(0, mYaw, 0);
-            } else {
-              facilityGrp.position.set(mx, my, -ms);
-              facilityGrp.rotation.set(mPitch, mYaw, 0);
-            }
+        const mx = roadCenterX(ms);
+        const my = roadElevationY(ms);
+        const mYaw = -Math.atan2(roadCenterDX(ms), 1);
+        const mPitch = Math.atan(roadElevationDY(ms));
+
+        const facilityGrp = this.facilityMap.get(m.styleId);
+        if (facilityGrp) {
+          facilityGrp.visible = true;
+          if (m.type === 'sa' || m.type === 'pa') {
+            const lift = m.type === 'sa' ? 2.2 : 1.2;
+            facilityGrp.position.set(mx, my + lift, -ms);
+            facilityGrp.rotation.set(0, mYaw, 0);
+          } else {
+            facilityGrp.position.set(mx, my, -ms);
+            facilityGrp.rotation.set(mPitch, mYaw, 0);
           }
+        }
 
-          const divergeDs = m.type === 'sa' || m.type === 'ic' ? -165 : m.type === 'pa' ? -135 : -150;
-          const goreWidthX = m.type === 'sa' || m.type === 'ic' ? -9.625 : -9.475;
-          divGoreIdx = placeGore(this.divergeGorePool, divGoreIdx, ms + divergeDs, goreWidthX);
+        const divergeDs = m.type === 'sa' || m.type === 'ic' ? -165 : m.type === 'pa' ? -135 : -150;
+        const goreWidthX = m.type === 'sa' || m.type === 'ic' ? -9.625 : -9.475;
+        divGoreIdx = placeGore(this.divergeGorePool, divGoreIdx, ms + divergeDs, goreWidthX);
 
-          if (m.type === 'sa') {
-            mrgGoreIdx = placeGore(this.mergeGorePool, mrgGoreIdx, ms + 195, -9.55);
-          } else if (m.type === 'pa') {
-            mrgGoreIdx = placeGore(this.mergeGorePool, mrgGoreIdx, ms + 155, -9.45);
-          }
+        if (m.type === 'sa') {
+          mrgGoreIdx = placeGore(this.mergeGorePool, mrgGoreIdx, ms + 195, -9.55);
+        } else if (m.type === 'pa') {
+          mrgGoreIdx = placeGore(this.mergeGorePool, mrgGoreIdx, ms + 155, -9.45);
         }
       }
     }
@@ -2162,10 +2207,10 @@ export class HighwayWorld {
       medUv.setXY(mIdx + 2, vCoord, 0.8);
       medUv.setXY(mIdx + 3, vCoord, 0);
 
-      // Left & Right Guardrails (smoothly hugs curved decel, ramp, plaza curb, and accel lane!)
+      // Left & Right Guardrails (smoothly hugs curved decel, ramp, plaza curb, and collapses cleanly behind portals)
       const grLeftX = prof.hasRamp ? prof.outerX - 0.28 : -8.55;
       const grBot = prof.isPlaza ? 0.1 : 0.25;
-      const grTop = prof.isPlaza ? 0.44 : 0.92;
+      const grTop = prof.rampCollapsed ? grBot : prof.isPlaza ? 0.44 : 0.92;
       grLPos.setXYZ(rIdx, cx + rightX * grLeftX, rampY + grBot, z + rightZ * grLeftX);
       grLPos.setXYZ(rIdx + 1, cx + rightX * grLeftX, rampY + grTop, z + rightZ * grLeftX);
       grLNorm.setXYZ(rIdx, 1, 0, 0);
@@ -2182,7 +2227,13 @@ export class HighwayWorld {
 
       // Shizuoka Tea-Field Hillsides & Grounded Outer Mountain Skirts (smooth continuous blends — zero wavy snaps!)
       const tIdx = r * 5;
-      const rampTerrainW = prof.hasRamp ? smoothstep(-9.0, -14.0, prof.outerX) : 0;
+      const terLeftEdge =
+        prof.terrainLeftEdgeX !== undefined
+          ? prof.terrainLeftEdgeX
+          : prof.hasRamp
+            ? Math.min(-8.6, prof.outerX - 0.5)
+            : -8.6;
+      const rampTerrainW = smoothstep(-9.0, -14.0, terLeftEdge);
       const surugaW =
         prof.milestone?.styleId === 'suruga-sa'
           ? Math.min(smoothstep(-215, -165, prof.ds), 1 - smoothstep(165, 215, prof.ds))
@@ -2199,10 +2250,9 @@ export class HighwayWorld {
       const farPeakL = THREE.MathUtils.lerp(20 + 14 * Math.sin(s * 0.0045), -32, surugaW);
       const farPeakR = 19 + 14 * Math.cos(s * 0.0038);
 
-      const terLeftEdge = prof.hasRamp ? Math.min(-8.6, prof.outerX - 0.5) : -8.6;
       const terLeftEdgeY = THREE.MathUtils.lerp(rampY - 0.08, cy - 16, viaductWL);
       const terLeftMid = THREE.MathUtils.lerp(
-        THREE.MathUtils.lerp(-30, Math.min(-42, prof.outerX - 18), rampTerrainW),
+        THREE.MathUtils.lerp(-30, Math.min(-42, terLeftEdge - 17.5), rampTerrainW),
         -69.5,
         surugaW,
       );

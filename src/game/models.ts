@@ -2667,9 +2667,273 @@ function buildExtrudedRibbonFromCurve(
   return geo;
 }
 
+function addViaductChevronSigns(
+  group: THREE.Group,
+  curve: THREE.CatmullRomCurve3,
+  tStart: number,
+  tEnd: number,
+  count: number,
+  lateralSign: number,
+  halfDeckWidth: number,
+): void {
+  const chevronCanvas = document.createElement('canvas');
+  chevronCanvas.width = 128;
+  chevronCanvas.height = 96;
+  const ctx = chevronCanvas.getContext('2d');
+  if (ctx) {
+    ctx.fillStyle = '#0f172a';
+    ctx.fillRect(0, 0, 128, 96);
+    ctx.fillStyle = '#facc15';
+    ctx.fillRect(0, 0, 128, 8);
+    ctx.fillRect(0, 88, 128, 8);
+    ctx.beginPath();
+    ctx.moveTo(28, 16);
+    ctx.lineTo(66, 16);
+    ctx.lineTo(100, 48);
+    ctx.lineTo(66, 80);
+    ctx.lineTo(28, 80);
+    ctx.lineTo(62, 48);
+    ctx.closePath();
+    ctx.fill();
+  }
+  const chevTex = new THREE.CanvasTexture(chevronCanvas);
+  chevTex.colorSpace = THREE.SRGBColorSpace;
+  const chevFaceMat = new THREE.MeshStandardMaterial({
+    map: chevTex,
+    emissive: 0xfacc15,
+    emissiveMap: chevTex,
+    emissiveIntensity: 0.45,
+    roughness: 0.4,
+  });
+  const backMat = new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.65 });
+  const postMat = new THREE.MeshStandardMaterial({ color: 0x64748b, metalness: 0.6, roughness: 0.4 });
+  const signGeo = new THREE.BoxGeometry(1.35, 0.95, 0.08);
+  const postGeo = new THREE.CylinderGeometry(0.05, 0.05, 1.5, 6);
+  const up = new THREE.Vector3(0, 1, 0);
+
+  for (let i = 0; i < count; i++) {
+    const t = THREE.MathUtils.lerp(tStart, tEnd, i / Math.max(1, count - 1));
+    const pt = curve.getPointAt(t);
+    const tan = curve.getTangentAt(t).normalize();
+    const right = new THREE.Vector3().crossVectors(tan, up).normalize();
+    const yaw = Math.atan2(-tan.x, -tan.z);
+
+    const holder = new THREE.Group();
+    holder.position.copy(pt).addScaledVector(right, lateralSign * (halfDeckWidth + 0.12));
+    holder.rotation.y = yaw;
+
+    const post = new THREE.Mesh(postGeo, postMat);
+    post.position.y = 1.15;
+    holder.add(post);
+
+    const board = new THREE.Mesh(signGeo, [
+      backMat,
+      backMat,
+      backMat,
+      backMat,
+      chevFaceMat,
+      backMat,
+    ]);
+    board.position.y = 1.75;
+    holder.add(board);
+
+    group.add(holder);
+  }
+}
+
+function addHammerheadPier(
+  group: THREE.Group,
+  x: number,
+  z: number,
+  deckTopY: number,
+  capWidth: number,
+  yaw: number,
+  concreteMat: THREE.Material,
+  darkConcreteMat: THREE.Material,
+): void {
+  const pierGroup = new THREE.Group();
+  pierGroup.position.set(x, 0, z);
+  pierGroup.rotation.y = yaw;
+
+  const girderUndersideY = deckTopY - 1.55;
+  const colTopY = girderUndersideY - 1.25;
+  const baseDepthY = -18;
+  const colHeight = Math.max(2.0, colTopY - baseDepthY);
+
+  // Tapered octagonal concrete column extending deep into valley floor
+  const colWidth = capWidth > 10 ? 2.4 : 1.75;
+  const col = new THREE.Mesh(
+    new THREE.CylinderGeometry(colWidth * 0.65, colWidth * 0.78, colHeight, 8),
+    concreteMat,
+  );
+  col.position.y = baseDepthY + colHeight * 0.5;
+  pierGroup.add(col);
+
+  // Ground-level concrete pier footing collar
+  const footing = new THREE.Mesh(
+    new THREE.BoxGeometry(colWidth * 2.1, 1.8, 3.4),
+    darkConcreteMat,
+  );
+  footing.position.y = -0.35;
+  pierGroup.add(footing);
+
+  // Hammerhead T-cap beam supporting steel box girders
+  const capBeam = new THREE.Mesh(
+    new THREE.BoxGeometry(capWidth, 1.28, 2.35),
+    concreteMat,
+  );
+  capBeam.position.y = girderUndersideY - 0.64;
+  pierGroup.add(capBeam);
+
+  // Steel seismic elastomeric bearing shoes on top of pier cap
+  const bearingGeo = new THREE.BoxGeometry(0.95, 0.35, 1.35);
+  const spread = capWidth * 0.28;
+  for (const bx of [-spread, spread]) {
+    const bearing = new THREE.Mesh(bearingGeo, darkConcreteMat);
+    bearing.position.set(bx, girderUndersideY + 0.14, 0);
+    pierGroup.add(bearing);
+  }
+
+  group.add(pierGroup);
+}
+
+function buildAuxiliaryViaductDeck(
+  group: THREE.Group,
+  curve: THREE.CatmullRomCurve3,
+  steps: number,
+  halfWidth: number,
+  isDualCarriageway: boolean,
+  pierSpecs: Array<{ t: number; capWidth: number }>,
+  mats: {
+    concreteMat: THREE.Material;
+    darkConcreteMat: THREE.Material;
+    girderMat: THREE.Material;
+    parapetMat: THREE.Material;
+    asphaltMat: THREE.Material;
+    steelMat: THREE.Material;
+    lampGlowMat: THREE.Material;
+    screenMat: THREE.Material;
+    stripeMat: THREE.Material;
+  },
+): void {
+  const deckGeo = buildExtrudedRibbonFromCurve(curve, steps, halfWidth + 0.45, -0.05, 0.95);
+  group.add(new THREE.Mesh(deckGeo, mats.concreteMat));
+
+  if (isDualCarriageway) {
+    // Twin steel box girders under 4-lane crossing trunk expressway
+    const up = new THREE.Vector3(0, 1, 0);
+    for (const offsetSign of [-1, 1]) {
+      const subPts: THREE.Vector3[] = [];
+      for (let i = 0; i <= 24; i++) {
+        const t = i / 24;
+        const pt = curve.getPointAt(t);
+        const tan = curve.getTangentAt(t).normalize();
+        const right = new THREE.Vector3().crossVectors(tan, up).normalize();
+        subPts.push(pt.clone().addScaledVector(right, offsetSign * halfWidth * 0.48));
+      }
+      const subCurve = new THREE.CatmullRomCurve3(subPts);
+      group.add(new THREE.Mesh(buildExtrudedRibbonFromCurve(subCurve, steps, 1.9, -0.9, 1.45), mats.girderMat));
+    }
+  } else {
+    group.add(new THREE.Mesh(buildExtrudedRibbonFromCurve(curve, steps, 2.35, -0.9, 1.35), mats.girderMat));
+  }
+
+  const asphaltGeo = buildExtrudedRibbonFromCurve(curve, steps, halfWidth, 0.02, 0);
+  group.add(new THREE.Mesh(asphaltGeo, mats.asphaltMat));
+
+  const up = new THREE.Vector3(0, 1, 0);
+  const makeOffsetCurve = (latOffset: number, tMin = 0, tMax = 1, segs = 40) => {
+    const pts: THREE.Vector3[] = [];
+    for (let i = 0; i <= segs; i++) {
+      const t = THREE.MathUtils.lerp(tMin, tMax, i / segs);
+      const pt = curve.getPointAt(t);
+      const tan = curve.getTangentAt(t).normalize();
+      const right = new THREE.Vector3().crossVectors(tan, up).normalize();
+      pts.push(pt.clone().addScaledVector(right, latOffset));
+    }
+    return new THREE.CatmullRomCurve3(pts);
+  };
+
+  const leftWallCurve = makeOffsetCurve(-(halfWidth + 0.18), 0, 1, 40);
+  const rightWallCurve = makeOffsetCurve(halfWidth + 0.18, 0, 1, 40);
+  group.add(new THREE.Mesh(buildExtrudedRibbonFromCurve(leftWallCurve, steps, 0.2, 0.96, 1.0), mats.parapetMat));
+  group.add(new THREE.Mesh(buildExtrudedRibbonFromCurve(rightWallCurve, steps, 0.2, 0.96, 1.0), mats.parapetMat));
+
+  if (isDualCarriageway) {
+    group.add(new THREE.Mesh(buildExtrudedRibbonFromCurve(curve, steps, 0.32, 1.02, 1.04), mats.concreteMat));
+
+    // Translucent acoustic noise walls along crossing trunk expressway edges (flush atop parapets)
+    for (const side of [-1, 1]) {
+      const screenCurve = makeOffsetCurve(side * (halfWidth + 0.22), 0.12, 0.88, 32);
+      group.add(new THREE.Mesh(buildExtrudedRibbonFromCurve(screenCurve, 44, 0.05, 3.0, 2.1), mats.screenMat));
+    }
+
+    // Lane & edge white stripes
+    for (const sx of [-halfWidth + 0.35, -0.58, 0.58, halfWidth - 0.35]) {
+      const stripeCurve = makeOffsetCurve(sx, 0, 1, 32);
+      group.add(new THREE.Mesh(buildExtrudedRibbonFromCurve(stripeCurve, 48, 0.09, 0.035, 0), mats.stripeMat));
+    }
+  }
+
+  // Viaduct streetlamps along deck
+  const poleGeo = new THREE.CylinderGeometry(0.07, 0.1, 6.2, 7);
+  const armGeo = new THREE.BoxGeometry(1.75, 0.1, 0.1);
+  const bulbGeo = new THREE.BoxGeometry(0.55, 0.08, 0.24);
+  const lampCount = isDualCarriageway ? 7 : 6;
+  for (let i = 1; i <= lampCount; i++) {
+    const t = i / (lampCount + 1);
+    const pt = curve.getPointAt(t);
+    const tan = curve.getTangentAt(t).normalize();
+    const right = new THREE.Vector3().crossVectors(tan, up).normalize();
+    const yaw = Math.atan2(-tan.x, -tan.z);
+
+    const lampHolder = new THREE.Group();
+    lampHolder.position.copy(pt);
+    if (!isDualCarriageway) lampHolder.position.addScaledVector(right, halfWidth + 0.12);
+    lampHolder.rotation.y = yaw;
+
+    const pole = new THREE.Mesh(poleGeo, mats.steelMat);
+    pole.position.y = 3.1;
+    lampHolder.add(pole);
+
+    if (isDualCarriageway) {
+      const armL = new THREE.Mesh(armGeo, mats.steelMat);
+      armL.position.set(-0.9, 6.1, 0);
+      lampHolder.add(armL);
+      const bulbL = new THREE.Mesh(bulbGeo, mats.lampGlowMat);
+      bulbL.position.set(-1.55, 6.02, 0);
+      lampHolder.add(bulbL);
+
+      const armR = new THREE.Mesh(armGeo, mats.steelMat);
+      armR.position.set(0.9, 6.1, 0);
+      lampHolder.add(armR);
+      const bulbR = new THREE.Mesh(bulbGeo, mats.lampGlowMat);
+      bulbR.position.set(1.55, 6.02, 0);
+      lampHolder.add(bulbR);
+    } else {
+      const arm = new THREE.Mesh(armGeo, mats.steelMat);
+      arm.position.set(-0.75, 6.1, 0);
+      lampHolder.add(arm);
+      const bulb = new THREE.Mesh(bulbGeo, mats.lampGlowMat);
+      bulb.position.set(-1.35, 6.02, 0);
+      lampHolder.add(bulb);
+    }
+
+    group.add(lampHolder);
+  }
+
+  for (const ps of pierSpecs) {
+    const pt = curve.getPointAt(ps.t);
+    const tan = curve.getTangentAt(ps.t).normalize();
+    const yaw = Math.atan2(-tan.x, -tan.z);
+    addHammerheadPier(group, pt.x, pt.z, pt.y, ps.capWidth, yaw, mats.concreteMat, mats.darkConcreteMat);
+  }
+}
+
 export function createJctOverpass(textures?: ProceduralTexturePack): THREE.Group {
   const group = new THREE.Group();
   const concreteMat = new THREE.MeshStandardMaterial({ color: 0x808790, roughness: 0.85 });
+  const darkConcreteMat = new THREE.MeshStandardMaterial({ color: 0x525b66, roughness: 0.88 });
   const girderMat = new THREE.MeshStandardMaterial({ color: 0x3b4d63, roughness: 0.55, metalness: 0.5 });
   const parapetMat = new THREE.MeshStandardMaterial({ color: 0x9ca3af, roughness: 0.8 });
   const asphaltMat = new THREE.MeshStandardMaterial({
@@ -2677,48 +2941,92 @@ export function createJctOverpass(textures?: ProceduralTexturePack): THREE.Group
     color: textures ? 0xffffff : 0x262a31,
     roughness: 0.9,
   });
-
-  const curve = createJctRampCurve();
-  const steps = 110;
-
-  // Concrete deck slab + steel-blue box girder underside
-  const deckGeo = buildExtrudedRibbonFromCurve(curve, steps, 4.4, -0.05, 0.95);
-  group.add(new THREE.Mesh(deckGeo, concreteMat));
-
-  const girderGeo = buildExtrudedRibbonFromCurve(curve, steps, 2.7, -0.9, 1.35);
-  group.add(new THREE.Mesh(girderGeo, girderMat));
-
-  // Smooth flat drivable asphalt top deck (8.0m wide)
-  const asphaltGeo = buildExtrudedRibbonFromCurve(curve, steps, 4.0, 0.02, 0);
-  group.add(new THREE.Mesh(asphaltGeo, asphaltMat));
-
-  // Left & Right parapet barrier walls + viaduct streetlamps + expansion joints
-  const up = new THREE.Vector3(0, 1, 0);
-  const leftRailPts: THREE.Vector3[] = [];
-  const rightRailPts: THREE.Vector3[] = [];
-  for (let i = 0; i <= 64; i++) {
-    const t = i / 64;
-    const pt = curve.getPointAt(t);
-    const tan = curve.getTangentAt(t).normalize();
-    const right = new THREE.Vector3().crossVectors(tan, up).normalize();
-    leftRailPts.push(pt.clone().addScaledVector(right, -4.15).add(new THREE.Vector3(0, 0.52, 0)));
-    rightRailPts.push(pt.clone().addScaledVector(right, 4.15).add(new THREE.Vector3(0, 0.52, 0)));
-  }
-  const leftWallGeo = new THREE.TubeGeometry(new THREE.CatmullRomCurve3(leftRailPts), 64, 0.34, 4, false);
-  leftWallGeo.scale(1, 1.4, 1);
-  const rightWallGeo = new THREE.TubeGeometry(new THREE.CatmullRomCurve3(rightRailPts), 64, 0.34, 4, false);
-  rightWallGeo.scale(1, 1.4, 1);
-  group.add(new THREE.Mesh(leftWallGeo, parapetMat));
-  group.add(new THREE.Mesh(rightWallGeo, parapetMat));
-
   const steelMat = new THREE.MeshStandardMaterial({ color: 0x64748b, metalness: 0.65, roughness: 0.35 });
   const lampGlowMat = new THREE.MeshStandardMaterial({
     color: 0xfef3c7,
     emissive: 0xffd28a,
     emissiveIntensity: 1.8,
   });
+  const screenMat = new THREE.MeshStandardMaterial({
+    color: 0xbae6fd,
+    roughness: 0.2,
+    metalness: 0.25,
+    transparent: true,
+    opacity: 0.36,
+  });
+  const stripeMat = new THREE.MeshStandardMaterial({ color: 0xf8fafc, roughness: 0.5 });
+  const jointMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.55, metalness: 0.6 });
 
-  // Viaduct lamps & orange parapet reflectors spaced cleanly along the entire flyover
+  const sharedMats = {
+    concreteMat,
+    darkConcreteMat,
+    girderMat,
+    parapetMat,
+    asphaltMat,
+    steelMat,
+    lampGlowMat,
+    screenMat,
+    stripeMat,
+  };
+
+  // === TIER 1 (Drivable): Main JCT Ramp Viaduct (SHARED_JCT_CURVE) ===
+  const curve = createJctRampCurve();
+  const steps = 110;
+
+  const deckGeo = buildExtrudedRibbonFromCurve(curve, steps, 4.4, -0.05, 0.95);
+  group.add(new THREE.Mesh(deckGeo, concreteMat));
+
+  const girderGeo = buildExtrudedRibbonFromCurve(curve, steps, 2.7, -0.9, 1.35);
+  group.add(new THREE.Mesh(girderGeo, girderMat));
+
+  const asphaltGeo = buildExtrudedRibbonFromCurve(curve, steps, 4.0, 0.02, 0);
+  group.add(new THREE.Mesh(asphaltGeo, asphaltMat));
+
+  const up = new THREE.Vector3(0, 1, 0);
+  const leftRailPts: THREE.Vector3[] = [];
+  const rightRailPts: THREE.Vector3[] = [];
+  for (let i = 0; i <= 48; i++) {
+    const t = i / 48;
+    const pt = curve.getPointAt(t);
+    const tan = curve.getTangentAt(t).normalize();
+    const right = new THREE.Vector3().crossVectors(tan, up).normalize();
+    leftRailPts.push(pt.clone().addScaledVector(right, -4.18));
+    rightRailPts.push(pt.clone().addScaledVector(right, 4.18));
+  }
+  group.add(new THREE.Mesh(buildExtrudedRibbonFromCurve(new THREE.CatmullRomCurve3(leftRailPts), steps, 0.2, 0.96, 1.0), parapetMat));
+  group.add(new THREE.Mesh(buildExtrudedRibbonFromCurve(new THREE.CatmullRomCurve3(rightRailPts), steps, 0.2, 0.96, 1.0), parapetMat));
+
+  // Curved acoustic noise screen along the elevated span of the drivable ramp (t = 0.22..0.72)
+  const drivableScreenPts: THREE.Vector3[] = [];
+  for (let i = 0; i <= 28; i++) {
+    const t = THREE.MathUtils.lerp(0.22, 0.72, i / 28);
+    const pt = curve.getPointAt(t);
+    const tan = curve.getTangentAt(t).normalize();
+    const right = new THREE.Vector3().crossVectors(tan, up).normalize();
+    drivableScreenPts.push(pt.clone().addScaledVector(right, -4.22));
+  }
+  group.add(
+    new THREE.Mesh(buildExtrudedRibbonFromCurve(new THREE.CatmullRomCurve3(drivableScreenPts), 48, 0.05, 2.95, 2.05), screenMat),
+  );
+
+  // Steel bridge expansion joints across the drivable viaduct deck
+  const jointGeo = new THREE.BoxGeometry(7.9, 0.03, 0.45);
+  for (const jt of [0.14, 0.28, 0.42, 0.56, 0.72, 0.88]) {
+    const pt = curve.getPointAt(jt);
+    const tan = curve.getTangentAt(jt).normalize();
+    const joint = new THREE.Mesh(jointGeo, jointMat);
+    joint.position.set(pt.x, pt.y + 0.03, pt.z);
+    joint.rotation.y = Math.atan2(-tan.x, -tan.z);
+    group.add(joint);
+  }
+
+  // Chevron curve warning signs on outer edge of the sweeping turn
+  addViaductChevronSigns(group, curve, 0.22, 0.66, 7, -1, 4.15);
+
+  // Viaduct lamps spaced cleanly along the entire flyover
+  const lampPoleGeo = new THREE.CylinderGeometry(0.07, 0.1, 6.2, 8);
+  const lampArmGeo = new THREE.BoxGeometry(1.7, 0.1, 0.1);
+  const lampBulbGeo = new THREE.BoxGeometry(0.55, 0.08, 0.24);
   for (let i = 1; i <= 8; i++) {
     const t = i / 9.2;
     const pt = curve.getPointAt(t);
@@ -2730,36 +3038,52 @@ export function createJctOverpass(textures?: ProceduralTexturePack): THREE.Group
     lampHolder.position.copy(pt).addScaledVector(right, 4.15);
     lampHolder.rotation.y = yaw;
 
-    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.1, 6.2, 8), steelMat);
+    const pole = new THREE.Mesh(lampPoleGeo, steelMat);
     pole.position.y = 3.1;
     lampHolder.add(pole);
 
-    const arm = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.1, 0.1), steelMat);
+    const arm = new THREE.Mesh(lampArmGeo, steelMat);
     arm.position.set(-0.75, 6.1, 0);
     lampHolder.add(arm);
 
-    const bulb = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.08, 0.24), lampGlowMat);
+    const bulb = new THREE.Mesh(lampBulbGeo, lampGlowMat);
     bulb.position.set(-1.35, 6.02, 0);
     lampHolder.add(bulb);
 
     group.add(lampHolder);
   }
 
-  // Concrete piers supporting the JCT viaduct strictly outside mainline shoulders (X < -9.5 or X > +25.5)
-  const pierGeo = new THREE.CylinderGeometry(1.05, 1.25, 13.0, 10);
-  for (const [px, pz, py] of [
-    [-33.5, 18, -1.5],
-    [-22.0, -14, 2.8],
-    [34.0, -48, 3.8],
-    [68.0, -78, 1.0],
-    [90.0, -130, -2.5],
-  ]) {
-    const pier = new THREE.Mesh(pierGeo, concreteMat);
-    pier.position.set(px, py, pz);
-    group.add(pier);
+  // Hammerhead T-cap concrete bridge piers supporting drivable viaduct strictly clear of mainline (X < -11.5 or X > +26.5)
+  for (const ptT of [0.24, 0.36, 0.62, 0.72, 0.84]) {
+    const pt = curve.getPointAt(ptT);
+    const tan = curve.getTangentAt(ptT).normalize();
+    if (pt.x > -11.5 && pt.x < 26.5) continue;
+    addHammerheadPier(group, pt.x, pt.z, pt.y, 7.6, Math.atan2(-tan.x, -tan.z), concreteMat, darkConcreteMat);
   }
 
+  // Concrete bridge abutment headwall at ramp touchdown (X = 96, Z = -235)
+  const abutment = new THREE.Mesh(new THREE.BoxGeometry(11.0, 4.8, 3.2), darkConcreteMat);
+  abutment.position.set(96, -1.6, -235);
+  group.add(abutment);
+
   // Place green JCT overhead directional portals at t = 0.44 and t = 0.94
+  const jctTex = textures?.jctRampSignTexture ?? null;
+  const signMat = jctTex
+    ? new THREE.MeshStandardMaterial({
+        map: jctTex,
+        emissive: 0xffffff,
+        emissiveMap: jctTex,
+        emissiveIntensity: 0.65,
+        roughness: 0.35,
+      })
+    : new THREE.MeshStandardMaterial({
+        color: 0x00663c,
+        emissive: 0x059669,
+        emissiveIntensity: 0.45,
+        roughness: 0.4,
+      });
+  const backMat = new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.6 });
+
   for (const portalT of [0.44, 0.94]) {
     const portalPt = curve.getPointAt(portalT);
     const portalTan = curve.getTangentAt(portalT).normalize();
@@ -2780,22 +3104,6 @@ export function createJctOverpass(textures?: ProceduralTexturePack): THREE.Group
     beam.position.set(0, 6.0, 0);
     portalGroup.add(beam);
 
-    const jctTex = textures?.jctRampSignTexture ?? null;
-    const signMat = jctTex
-      ? new THREE.MeshStandardMaterial({
-          map: jctTex,
-          emissive: 0xffffff,
-          emissiveMap: jctTex,
-          emissiveIntensity: 0.65,
-          roughness: 0.35,
-        })
-      : new THREE.MeshStandardMaterial({
-          color: 0x00663c,
-          emissive: 0x059669,
-          emissiveIntensity: 0.45,
-          roughness: 0.4,
-        });
-    const backMat = new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.6 });
     const signBoard = new THREE.Mesh(new THREE.BoxGeometry(7.2, 2.1, 0.2), [
       backMat,
       backMat,
@@ -2808,6 +3116,168 @@ export function createJctOverpass(textures?: ProceduralTexturePack): THREE.Group
     portalGroup.add(signBoard);
 
     group.add(portalGroup);
+  }
+
+  // === TIER 2: Crossing 4-Lane Divided Trunk Expressway (Y ~ 17.8m over mainline & above Tier 1!) ===
+  const trunkCurve = new THREE.CatmullRomCurve3([
+    new THREE.Vector3(-165, 13.0, 62),
+    new THREE.Vector3(-84, 16.4, 4),
+    new THREE.Vector3(-12, 17.8, -50),
+    new THREE.Vector3(38, 17.6, -86),
+    new THREE.Vector3(95, 16.0, -126),
+    new THREE.Vector3(168, 12.8, -178),
+  ]);
+  buildAuxiliaryViaductDeck(
+    group,
+    trunkCurve,
+    72,
+    8.2,
+    true,
+    [
+      { t: 0.18, capWidth: 14.5 },
+      { t: 0.36, capWidth: 14.5 },
+      { t: 0.64, capWidth: 14.5 },
+      { t: 0.84, capWidth: 14.5 },
+    ],
+    sharedMats,
+  );
+
+  // Overhead trunk gantry spanning the crossing 4-lane expressway
+  const trunkGantryPt = trunkCurve.getPointAt(0.42);
+  const trunkGantryTan = trunkCurve.getTangentAt(0.42).normalize();
+  const trunkGantry = new THREE.Group();
+  trunkGantry.position.copy(trunkGantryPt);
+  trunkGantry.rotation.y = Math.atan2(-trunkGantryTan.x, -trunkGantryTan.z);
+  const tgPillarGeo = new THREE.CylinderGeometry(0.24, 0.28, 6.8, 8);
+  const tgL = new THREE.Mesh(tgPillarGeo, steelMat);
+  tgL.position.set(-8.3, 3.4, 0);
+  trunkGantry.add(tgL);
+  const tgR = new THREE.Mesh(tgPillarGeo, steelMat);
+  tgR.position.set(8.3, 3.4, 0);
+  trunkGantry.add(tgR);
+  const tgBeam = new THREE.Mesh(new THREE.BoxGeometry(17.2, 0.45, 0.42), steelMat);
+  tgBeam.position.set(0, 6.6, 0);
+  trunkGantry.add(tgBeam);
+  const tgSign = new THREE.Mesh(new THREE.BoxGeometry(11.0, 2.5, 0.22), [
+    backMat,
+    backMat,
+    backMat,
+    backMat,
+    signMat,
+    signMat,
+  ]);
+  tgSign.position.set(0, 6.5, 0.22);
+  trunkGantry.add(tgSign);
+  group.add(trunkGantry);
+
+  // === TIER 3: High Sweeping Opposing Turbine Flyover Loop (Y ~ 21.8m at mainline crossing Z = -8) ===
+  const upperFlyoverCurve = new THREE.CatmullRomCurve3([
+    new THREE.Vector3(132, 3.0, 82),
+    new THREE.Vector3(72, 13.8, 32),
+    new THREE.Vector3(8, 21.8, -8),
+    new THREE.Vector3(-48, 18.2, 22),
+    new THREE.Vector3(-92, 10.6, -24),
+    new THREE.Vector3(-124, 3.4, -92),
+    new THREE.Vector3(-132, 0.2, -175),
+  ]);
+  buildAuxiliaryViaductDeck(
+    group,
+    upperFlyoverCurve,
+    78,
+    4.0,
+    false,
+    [
+      { t: 0.16, capWidth: 7.4 },
+      { t: 0.48, capWidth: 7.4 },
+      { t: 0.68, capWidth: 7.4 },
+      { t: 0.85, capWidth: 7.4 },
+    ],
+    sharedMats,
+  );
+  addViaductChevronSigns(group, upperFlyoverCurve, 0.34, 0.72, 6, -1, 4.1);
+
+  // === TIER 4A & 4B: Lower Outer Braided Collector / Turbine Loop Ramps (strictly outside mainline shoulders) ===
+  const leftLoopCurve = new THREE.CatmullRomCurve3([
+    new THREE.Vector3(-42, 0.2, 140),
+    new THREE.Vector3(-74, 3.8, 82),
+    new THREE.Vector3(-96, 7.6, 16),
+    new THREE.Vector3(-88, 9.2, -56),
+    new THREE.Vector3(-60, 6.8, -118),
+    new THREE.Vector3(-28, 1.8, -175),
+  ]);
+  buildAuxiliaryViaductDeck(
+    group,
+    leftLoopCurve,
+    54,
+    3.8,
+    false,
+    [
+      { t: 0.24, capWidth: 7.0 },
+      { t: 0.52, capWidth: 7.0 },
+      { t: 0.80, capWidth: 7.0 },
+    ],
+    sharedMats,
+  );
+
+  const rightLoopCurve = new THREE.CatmullRomCurve3([
+    new THREE.Vector3(48, 0.2, 95),
+    new THREE.Vector3(38, 6.4, 32),
+    new THREE.Vector3(36, 11.2, -24),
+    new THREE.Vector3(66, 12.6, -78),
+    new THREE.Vector3(112, 7.8, -138),
+    new THREE.Vector3(148, 1.5, -198),
+  ]);
+  buildAuxiliaryViaductDeck(
+    group,
+    rightLoopCurve,
+    54,
+    3.8,
+    false,
+    [
+      { t: 0.22, capWidth: 7.0 },
+      { t: 0.52, capWidth: 7.0 },
+      { t: 0.78, capWidth: 7.0 },
+    ],
+    sharedMats,
+  );
+  addViaductChevronSigns(group, rightLoopCurve, 0.25, 0.65, 5, 1, 3.9);
+
+  // === High-Mast 28m Interchange Floodlight Towers ===
+  const mastPoleGeo = new THREE.CylinderGeometry(0.18, 0.42, 32, 8);
+  const mastFootGeo = new THREE.BoxGeometry(2.2, 2.5, 2.2);
+  const mastRingGeo = new THREE.TorusGeometry(1.5, 0.1, 6, 16);
+  const mastFloodGeo = new THREE.BoxGeometry(0.75, 0.35, 0.45);
+  for (const [tx, tz] of [
+    [-42, -42],
+    [38, -2],
+    [52, -98],
+  ]) {
+    const tower = new THREE.Group();
+    tower.position.set(tx, -4, tz);
+
+    const foot = new THREE.Mesh(mastFootGeo, darkConcreteMat);
+    foot.position.y = 3.5;
+    tower.add(foot);
+
+    const mast = new THREE.Mesh(mastPoleGeo, steelMat);
+    mast.position.y = 16;
+    tower.add(mast);
+
+    const ring = new THREE.Mesh(mastRingGeo, steelMat);
+    ring.rotation.x = Math.PI / 2;
+    ring.position.y = 31.4;
+    tower.add(ring);
+
+    for (let k = 0; k < 6; k++) {
+      const ang = (k / 6) * Math.PI * 2;
+      const flood = new THREE.Mesh(mastFloodGeo, lampGlowMat);
+      flood.position.set(Math.cos(ang) * 1.45, 31.2, Math.sin(ang) * 1.45);
+      flood.rotation.y = -ang;
+      flood.rotation.z = -0.35;
+      tower.add(flood);
+    }
+
+    group.add(tower);
   }
 
   return group;
@@ -2940,6 +3410,56 @@ export function createIcExitComplex(textures: ProceduralTexturePack): THREE.Grou
     gateBar.rotation.z = 0.72; // Raised open for non-stop pass
     group.add(gateBar);
   }
+
+  // Post-Toll Local Road Exit Overpass Portal & Landscaped Earthen Berm (X = -65, Z = -205)
+  // Frames the IC exit ramp naturally into the surrounding road network where the ground ribbon closes.
+  const portalMat = new THREE.MeshStandardMaterial({ color: 0x64748b, roughness: 0.85 });
+  const bermGrassMat = new THREE.MeshStandardMaterial({ color: 0x3f6236, roughness: 0.95 });
+  const girderMat = new THREE.MeshStandardMaterial({ color: 0x3b4d63, roughness: 0.55, metalness: 0.45 });
+  const darkTunnelMat = new THREE.MeshStandardMaterial({ color: 0x0f172a, roughness: 0.95 });
+
+  const portalGroup = new THREE.Group();
+  portalGroup.position.set(-65.0, 0, -206);
+  portalGroup.rotation.y = 0.22;
+
+  const wallL = new THREE.Mesh(new THREE.BoxGeometry(3.2, 6.2, 16), portalMat);
+  wallL.position.set(-8.6, 2.8, 0);
+  portalGroup.add(wallL);
+
+  const wallR = new THREE.Mesh(new THREE.BoxGeometry(3.2, 6.2, 16), portalMat);
+  wallR.position.set(8.6, 2.8, 0);
+  portalGroup.add(wallR);
+
+  const crossDeck = new THREE.Mesh(new THREE.BoxGeometry(28.0, 1.5, 16), girderMat);
+  crossDeck.position.set(0, 6.4, 0);
+  portalGroup.add(crossDeck);
+
+  const darkCore = new THREE.Mesh(new THREE.BoxGeometry(14.0, 5.2, 10), darkTunnelMat);
+  darkCore.position.set(0, 2.6, -2.8);
+  portalGroup.add(darkCore);
+
+  const greenExitBoard = new THREE.Mesh(new THREE.BoxGeometry(10.5, 1.8, 0.2), [
+    wallMat,
+    wallMat,
+    wallMat,
+    wallMat,
+    tollSignMat,
+    wallMat,
+  ]);
+  greenExitBoard.position.set(0, 7.6, 7.9);
+  portalGroup.add(greenExitBoard);
+
+  const bermL = new THREE.Mesh(new THREE.ConeGeometry(16, 8.5, 7), bermGrassMat);
+  bermL.scale.set(1.2, 1, 1.8);
+  bermL.position.set(-14, 3.2, -3);
+  portalGroup.add(bermL);
+
+  const bermR = new THREE.Mesh(new THREE.ConeGeometry(14, 7.5, 7), bermGrassMat);
+  bermR.scale.set(1.1, 1, 1.8);
+  bermR.position.set(15, 2.8, -4);
+  portalGroup.add(bermR);
+
+  group.add(portalGroup);
 
   return group;
 }

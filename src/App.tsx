@@ -141,7 +141,7 @@ export default function App() {
   const [livePreferGeo, setLivePreferGeo] = useState(false);
   const [cameraMode, setCameraMode] = useState<CameraMode>(CameraMode.Chase);
   const [trafficDensity, setTrafficDensity] = useState<TrafficDensity>(TrafficDensity.Realistic);
-  const [qualityMode, setQualityMode] = useState<QualityMode>(QualityMode.Ultra);
+  const [qualityMode, setQualityMode] = useState<QualityMode>(QualityMode.Standard);
   const [paint, setPaint] = useState<CarPaintId>(CarPaintId.ChampionshipWhite);
   const [muted, setMuted] = useState(false);
   const [dockCollapsed, setDockCollapsed] = useState(false);
